@@ -27,6 +27,10 @@ export const MessageId = makeEntityId("MessageId");
 export type MessageId = typeof MessageId.Type;
 export const TurnId = makeEntityId("TurnId");
 export type TurnId = typeof TurnId.Type;
+export const ReportId = makeEntityId("ReportId");
+export type ReportId = typeof ReportId.Type;
+export const ReportRunId = makeEntityId("ReportRunId");
+export type ReportRunId = typeof ReportRunId.Type;
 
 export const ProviderItemId = makeEntityId("ProviderItemId");
 export type ProviderItemId = typeof ProviderItemId.Type;

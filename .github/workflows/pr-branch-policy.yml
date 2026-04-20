@@ -1,0 +1,77 @@
+name: PR Branch Policy
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Branch Naming Policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate branch naming policy
+        uses: actions/github-script@v8
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        with:
+          script: |
+            const prAuthor = (process.env.PR_AUTHOR ?? "").trim();
+            const baseRef = (process.env.BASE_REF ?? "").trim();
+            const headRef = (process.env.HEAD_REF ?? "").trim();
+
+            if (prAuthor.length === 0 || baseRef.length === 0 || headRef.length === 0) {
+              core.setFailed("Missing PR metadata required to validate the branch naming policy.");
+              return;
+            }
+
+            const expectedPrefix = `${prAuthor}/${baseRef}/`;
+            const actualPrefix = headRef.slice(0, expectedPrefix.length);
+            const featureFragment = headRef.slice(expectedPrefix.length);
+            const normalizedPrefixMatches =
+              actualPrefix.toLowerCase() === expectedPrefix.toLowerCase();
+
+            const errors = [];
+
+            if (!normalizedPrefixMatches) {
+              errors.push(`Expected branch prefix \`${expectedPrefix}\`.`);
+            }
+
+            if (headRef.includes(" ")) {
+              errors.push("Branch names cannot contain spaces. Use a slug such as `navigation-panel-correction`.");
+            }
+
+            if (featureFragment.length === 0) {
+              errors.push("Add a feature segment after the base branch name.");
+            } else if (!/^[a-z0-9]+(?:[._/-][a-z0-9]+)*$/.test(featureFragment)) {
+              errors.push(
+                "The feature segment must use lowercase letters, numbers, `.`, `_`, `-`, or extra `/` separators.",
+              );
+            }
+
+            if (errors.length > 0) {
+              await core.summary
+                .addHeading("Branch naming policy failed")
+                .addRaw(`Expected format: \`${prAuthor}/${baseRef}/feature-slug\``)
+                .addRaw("<br>")
+                .addList(errors)
+                .write();
+
+              core.setFailed(
+                [
+                  `Branch \`${headRef}\` does not match the required format.`,
+                  `Expected format: \`${prAuthor}/${baseRef}/feature-slug\`.`,
+                ].join(" "),
+              );
+              return;
+            }
+
+            await core.summary
+              .addHeading("Branch naming policy passed")
+              .addRaw(`Validated branch: \`${headRef}\``)
+              .write();

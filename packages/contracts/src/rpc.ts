@@ -45,6 +45,21 @@ import {
   OrchestrationRpcSchemas,
 } from "./orchestration";
 import {
+  REPORT_WS_METHODS,
+  ReportApproveInput,
+  ReportBeginPlanningInput,
+  ReportCreateDraftInput,
+  ReportDeleteInput,
+  ReportDeleteResult,
+  ReportMutationResult,
+  ReportRespondToPlanningInput,
+  ReportServiceError,
+  ReportSnapshot,
+  ReportStartRunInput,
+  ReportUpdateMetaInput,
+  ReportUpdatePlanInput,
+} from "./report";
+import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -306,6 +321,60 @@ export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.
   error: OrchestrationReplayEventsError,
 });
 
+export const WsReportGetSnapshotRpc = Rpc.make(REPORT_WS_METHODS.getSnapshot, {
+  payload: Schema.Struct({}),
+  success: ReportSnapshot,
+  error: ReportServiceError,
+});
+
+export const WsReportCreateDraftRpc = Rpc.make(REPORT_WS_METHODS.createDraft, {
+  payload: ReportCreateDraftInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
+export const WsReportUpdateMetaRpc = Rpc.make(REPORT_WS_METHODS.updateMeta, {
+  payload: ReportUpdateMetaInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
+export const WsReportUpdatePlanRpc = Rpc.make(REPORT_WS_METHODS.updatePlan, {
+  payload: ReportUpdatePlanInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
+export const WsReportBeginPlanningRpc = Rpc.make(REPORT_WS_METHODS.beginPlanning, {
+  payload: ReportBeginPlanningInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
+export const WsReportRespondToPlanningRpc = Rpc.make(REPORT_WS_METHODS.respondToPlanning, {
+  payload: ReportRespondToPlanningInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
+export const WsReportApproveRpc = Rpc.make(REPORT_WS_METHODS.approve, {
+  payload: ReportApproveInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
+export const WsReportStartRunRpc = Rpc.make(REPORT_WS_METHODS.startRun, {
+  payload: ReportStartRunInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
+export const WsReportDeleteRpc = Rpc.make(REPORT_WS_METHODS.delete, {
+  payload: ReportDeleteInput,
+  success: ReportDeleteResult,
+  error: ReportServiceError,
+});
+
 export const WsSubscribeOrchestrationDomainEventsRpc = Rpc.make(
   WS_METHODS.subscribeOrchestrationDomainEvents,
   {
@@ -370,4 +439,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationReplayEventsRpc,
+  WsReportGetSnapshotRpc,
+  WsReportCreateDraftRpc,
+  WsReportUpdateMetaRpc,
+  WsReportUpdatePlanRpc,
+  WsReportBeginPlanningRpc,
+  WsReportRespondToPlanningRpc,
+  WsReportApproveRpc,
+  WsReportStartRunRpc,
+  WsReportDeleteRpc,
 );

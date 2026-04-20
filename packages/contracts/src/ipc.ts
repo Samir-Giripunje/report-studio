@@ -49,6 +49,18 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type {
+  ReportApproveInput,
+  ReportBeginPlanningInput,
+  ReportCreateDraftInput,
+  ReportDeleteResult,
+  ReportMutationResult,
+  ReportRespondToPlanningInput,
+  ReportSnapshot,
+  ReportStartRunInput,
+  ReportUpdateMetaInput,
+  ReportUpdatePlanInput,
+} from "./report";
 import { EditorId } from "./editor";
 import { ServerSettings, ServerSettingsPatch } from "./settings";
 
@@ -195,5 +207,16 @@ export interface NativeApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+  };
+  reports: {
+    getSnapshot: () => Promise<ReportSnapshot>;
+    createDraft: (input: ReportCreateDraftInput) => Promise<ReportMutationResult>;
+    updateMeta: (input: ReportUpdateMetaInput) => Promise<ReportMutationResult>;
+    updatePlan: (input: ReportUpdatePlanInput) => Promise<ReportMutationResult>;
+    beginPlanning: (input: ReportBeginPlanningInput) => Promise<ReportMutationResult>;
+    respondToPlanning: (input: ReportRespondToPlanningInput) => Promise<ReportMutationResult>;
+    approve: (reportId: ReportApproveInput["reportId"]) => Promise<ReportMutationResult>;
+    startRun: (input: ReportStartRunInput) => Promise<ReportMutationResult>;
+    delete: (reportId: ReportApproveInput["reportId"]) => Promise<ReportDeleteResult>;
   };
 }

@@ -14,6 +14,9 @@ import {
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  ReportId,
+  type ReportMutationResult,
+  type ReportSnapshot,
   ResolvedKeybindingRule,
   ThreadId,
   WS_METHODS,
@@ -83,6 +86,7 @@ import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
+import { ReportService, type ReportServiceShape } from "./report/Services/ReportService.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -270,6 +274,7 @@ const buildAppUnderTest = (options?: {
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    reportService?: Partial<ReportServiceShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -308,6 +313,68 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.gitManager,
     });
     const gitStatusBroadcasterLayer = GitStatusBroadcasterLive.pipe(Layer.provide(gitManagerLayer));
+    const emptyReportSnapshot: ReportSnapshot = {
+      reports: [],
+    };
+    const emptyReportMutationResult: ReportMutationResult = {
+      report: {
+        id: ReportId.makeUnsafe("report:test"),
+        title: "Test Report",
+        folder: null,
+        status: "draft",
+        plan: {
+          version: "1.0",
+          status: "draft",
+          metadata: {
+            title: "Test Report",
+            reportType: "analysis",
+            audience: "general",
+            tone: "clear",
+            brief: "",
+            targetLength: {
+              minWords: 0,
+              maxWords: 0,
+            },
+            outputFormats: ["markdown"],
+            language: "en",
+            citationStyle: "inline",
+          },
+          globalSourceConfig: {
+            webSearch: {
+              enabled: true,
+              preferredDomains: [],
+              recencyFilter: null,
+              queriesHint: [],
+            },
+            userDocuments: {
+              enabled: false,
+              fileRefs: [],
+            },
+            knowledgeBase: {
+              enabled: false,
+              collectionId: null,
+            },
+          },
+          documentProfiles: [],
+          sectionTree: [],
+          crossCuttingInstructions: {
+            dataPresentation: "",
+            consistencyRules: [],
+            excludedTopics: [],
+          },
+          planning: {
+            status: "idle",
+            pendingQuestions: [],
+            conversation: [],
+            proposedOutline: null,
+            lastOrchestratedAt: null,
+          },
+        },
+        latestRun: null,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+    };
 
     const appLayer = HttpRouter.serve(makeRoutesLayer, {
       disableListenLog: true,
@@ -414,6 +481,18 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ReportService)({
+          getSnapshot: () => Effect.succeed(emptyReportSnapshot),
+          createDraft: () => Effect.succeed(emptyReportMutationResult),
+          updateMeta: () => Effect.succeed(emptyReportMutationResult),
+          updatePlan: () => Effect.succeed(emptyReportMutationResult),
+          approve: () => Effect.succeed(emptyReportMutationResult),
+          startRun: () => Effect.succeed(emptyReportMutationResult),
+          delete: ({ reportId }) => Effect.succeed({ reportId }),
+          ...options?.layers?.reportService,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),

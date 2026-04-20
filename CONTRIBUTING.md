@@ -10,6 +10,15 @@ If that sounds annoying, that is because it is. This project is still early and 
 
 PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff size based on changed lines.
 
+Pull requests must come from a branch named `<github-username>/<base-branch>/<feature-slug>`.
+
+Examples:
+
+- `Samir-Giripunje/main/navigation-panel-correction`
+- `Samir-Giripunje/stage/navigation-panel-correction`
+
+Spaces are not valid in Git branch names. Use a lowercase slug for the feature segment.
+
 If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
 
 ## What We Are Most Likely To Accept
@@ -37,6 +46,11 @@ If you open a 1,000+ line PR full of new features, we will probably close it qui
 ## If You Still Want To Open A PR
 
 Keep it small.
+
+Start from the latest target branch before you begin work.
+
+If you are targeting `main`, branch from the latest `main` and use the branch format
+`<github-username>/main/<feature-slug>`.
 
 Explain exactly what changed.
 

@@ -28,6 +28,7 @@ we may close it without merging it, or never review it.
 ## Checklist
 
 - [ ] This PR is small and focused
+- [ ] My branch is named `<github-username>/<base-branch>/<feature-slug>`
 - [ ] I explained what changed and why
 - [ ] I included before/after screenshots for any UI changes
 - [ ] I included a video for animation/interaction changes

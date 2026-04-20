@@ -110,6 +110,17 @@ export function createWsNativeApi(): NativeApi {
       onDomainEvent: (callback, options) =>
         rpcClient.orchestration.onDomainEvent(callback, options),
     },
+    reports: {
+      getSnapshot: rpcClient.reports.getSnapshot,
+      createDraft: rpcClient.reports.createDraft,
+      updateMeta: rpcClient.reports.updateMeta,
+      updatePlan: rpcClient.reports.updatePlan,
+      beginPlanning: rpcClient.reports.beginPlanning,
+      respondToPlanning: rpcClient.reports.respondToPlanning,
+      approve: (reportId) => rpcClient.reports.approve({ reportId }),
+      startRun: rpcClient.reports.startRun,
+      delete: (reportId) => rpcClient.reports.delete({ reportId }),
+    },
   };
 
   instance = { api };

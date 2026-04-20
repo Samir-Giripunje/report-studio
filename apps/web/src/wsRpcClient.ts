@@ -6,6 +6,7 @@ import {
   type GitStatusStreamEvent,
   type NativeApi,
   ORCHESTRATION_WS_METHODS,
+  REPORT_WS_METHODS,
   type ServerSettingsPatch,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -106,6 +107,17 @@ export interface WsRpcClient {
     readonly getFullThreadDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getFullThreadDiff>;
     readonly replayEvents: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.replayEvents>;
     readonly onDomainEvent: RpcStreamMethod<typeof WS_METHODS.subscribeOrchestrationDomainEvents>;
+  };
+  readonly reports: {
+    readonly getSnapshot: RpcUnaryNoArgMethod<typeof REPORT_WS_METHODS.getSnapshot>;
+    readonly createDraft: RpcUnaryMethod<typeof REPORT_WS_METHODS.createDraft>;
+    readonly updateMeta: RpcUnaryMethod<typeof REPORT_WS_METHODS.updateMeta>;
+    readonly updatePlan: RpcUnaryMethod<typeof REPORT_WS_METHODS.updatePlan>;
+    readonly beginPlanning: RpcUnaryMethod<typeof REPORT_WS_METHODS.beginPlanning>;
+    readonly respondToPlanning: RpcUnaryMethod<typeof REPORT_WS_METHODS.respondToPlanning>;
+    readonly approve: RpcUnaryMethod<typeof REPORT_WS_METHODS.approve>;
+    readonly startRun: RpcUnaryMethod<typeof REPORT_WS_METHODS.startRun>;
+    readonly delete: RpcUnaryMethod<typeof REPORT_WS_METHODS.delete>;
   };
 }
 
@@ -245,6 +257,22 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
           listener,
           options,
         ),
+    },
+    reports: {
+      getSnapshot: () => transport.request((client) => client[REPORT_WS_METHODS.getSnapshot]({})),
+      createDraft: (input) =>
+        transport.request((client) => client[REPORT_WS_METHODS.createDraft](input)),
+      updateMeta: (input) =>
+        transport.request((client) => client[REPORT_WS_METHODS.updateMeta](input)),
+      updatePlan: (input) =>
+        transport.request((client) => client[REPORT_WS_METHODS.updatePlan](input)),
+      beginPlanning: (input) =>
+        transport.request((client) => client[REPORT_WS_METHODS.beginPlanning](input)),
+      respondToPlanning: (input) =>
+        transport.request((client) => client[REPORT_WS_METHODS.respondToPlanning](input)),
+      approve: (input) => transport.request((client) => client[REPORT_WS_METHODS.approve](input)),
+      startRun: (input) => transport.request((client) => client[REPORT_WS_METHODS.startRun](input)),
+      delete: (input) => transport.request((client) => client[REPORT_WS_METHODS.delete](input)),
     },
   };
 }

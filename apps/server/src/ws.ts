@@ -14,6 +14,8 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
+  REPORT_WS_METHODS,
+  ReportServiceError,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -47,6 +49,7 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
+import { ReportService } from "./report/Services/ReportService";
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -67,6 +70,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+    const reportService = yield* ReportService;
     const serverCommandId = (tag: string) =>
       CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -355,6 +359,130 @@ const WsRpcLayer = WsRpcGroup.toLayer(
         .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
     return WsRpcGroup.of({
+      [REPORT_WS_METHODS.getSnapshot]: (_input) =>
+        observeRpcEffect(REPORT_WS_METHODS.getSnapshot, reportService.getSnapshot(), {
+          "rpc.aggregate": "reports",
+        }),
+      [REPORT_WS_METHODS.createDraft]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.createDraft,
+          reportService.createDraft(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to create report draft.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.updateMeta]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.updateMeta,
+          reportService.updateMeta(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to update report metadata.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.updatePlan]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.updatePlan,
+          reportService.updatePlan(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to update report plan.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.beginPlanning]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.beginPlanning,
+          reportService.beginPlanning(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to start report planning orchestration.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.respondToPlanning]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.respondToPlanning,
+          reportService.respondToPlanning(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to apply report planning feedback.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.approve]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.approve,
+          reportService.approve(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to approve report plan.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.startRun]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.startRun,
+          reportService.startRun(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to start report orchestration.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.delete]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.delete,
+          reportService.delete(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to delete report.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
       [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
         observeRpcEffect(
           ORCHESTRATION_WS_METHODS.getSnapshot,

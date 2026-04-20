@@ -2,9 +2,12 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
+  EllipsisIcon,
+  FileTextIcon,
   FolderIcon,
   GitPullRequestIcon,
   PlusIcon,
+  SearchIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -12,6 +15,7 @@ import {
 } from "lucide-react";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { autoAnimate } from "@formkit/auto-animate";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCallback,
   useEffect,
@@ -46,12 +50,14 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
+  type ReportRecord,
   ThreadId,
   type GitStatusResult,
 } from "@t3tools/contracts";
-import { Link, useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
+  type SidebarReportSortOrder,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
 import { isElectron } from "../env";
@@ -72,11 +78,15 @@ import {
 import { useGitStatus } from "../lib/gitStatusState";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useCreateReportDraft } from "../hooks/useCreateReportDraft";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 
 import { useThreadActions } from "../hooks/useThreadActions";
+import { type ReportCreationMode } from "../lib/reportCreation";
 import { toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { NewReportDialog } from "./reports/NewReportDialog";
+import { NewReportFolderDialog } from "./reports/NewReportFolderDialog";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import {
   getArm64IntelBuildWarningDescription,
@@ -129,12 +139,25 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import { useSidebarThreadSummaryById } from "../storeSelectors";
+import {
+  groupReportsForSidebar,
+  reportMatchesSidebarQuery,
+  sortReportsForSidebar,
+} from "../lib/reportList";
+import { reportQueryKeys, reportSnapshotQueryOptions } from "../lib/reportReactQuery";
+import { parseReportsRouteSearch } from "../reportsRouteSearch";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import type { Project } from "../types";
 const THREAD_PREVIEW_LIMIT = 6;
+const SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT = 4;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
   manual: "Manual",
+};
+const SIDEBAR_REPORT_SORT_LABELS: Record<SidebarReportSortOrder, string> = {
+  updated_at: "Last updated",
+  created_at: "Created at",
 };
 const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
   updated_at: "Last user message",
@@ -144,6 +167,26 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   duration: 180,
   easing: "ease-out",
 } as const;
+const EMPTY_REPORTS: ReadonlyArray<ReportRecord> = [];
+
+function toSidebarActionErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    error.message.trim().length > 0
+  ) {
+    return error.message;
+  }
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+  return "An error occurred.";
+}
 
 type SidebarProjectSnapshot = Project & {
   expanded: boolean;
@@ -253,6 +296,22 @@ function resolveThreadPr(
   }
 
   return gitStatus.pr ?? null;
+}
+
+function reportStatusClassName(status: ReportRecord["status"]): string {
+  switch (status) {
+    case "completed":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300";
+    case "failed":
+      return "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-300";
+    case "running":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-300";
+    case "approved":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300";
+    case "draft":
+    default:
+      return "border-border/80 bg-muted/40 text-muted-foreground";
+  }
 }
 
 interface SidebarThreadRowProps {
@@ -636,6 +695,48 @@ function ProjectSortMenu({
   );
 }
 
+function ReportSortMenu({
+  reportSortOrder,
+  onReportSortOrderChange,
+}: {
+  reportSortOrder: SidebarReportSortOrder;
+  onReportSortOrderChange: (sortOrder: SidebarReportSortOrder) => void;
+}) {
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground" />
+          }
+        >
+          <ArrowUpDownIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="right">Sort reports</TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="end" side="bottom" className="min-w-44">
+        <MenuGroup>
+          <div className="px-2 py-1 font-medium text-muted-foreground sm:text-xs">Sort reports</div>
+          <MenuRadioGroup
+            value={reportSortOrder}
+            onValueChange={(value) => {
+              onReportSortOrderChange(value as SidebarReportSortOrder);
+            }}
+          >
+            {(
+              Object.entries(SIDEBAR_REPORT_SORT_LABELS) as Array<[SidebarReportSortOrder, string]>
+            ).map(([value, label]) => (
+              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+                {label}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 function SortableProjectItem({
   projectId,
   disabled = false,
@@ -674,6 +775,8 @@ function SortableProjectItem({
 }
 
 export default function Sidebar() {
+  const queryClient = useQueryClient();
+  const reportsSnapshotQuery = useQuery(reportSnapshotQueryOptions());
   const projects = useStore((store) => store.projects);
   const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
@@ -698,6 +801,16 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
+  const isOnReports = pathname.startsWith("/reports");
+  const reportsSearch = useSearch({
+    strict: false,
+    select: (search) => parseReportsRouteSearch(search),
+  });
+  const routeReportId = useParams({
+    strict: false,
+    select: (params) =>
+      "reportId" in params && typeof params.reportId === "string" ? params.reportId : null,
+  });
   const appSettings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const { activeDraftThread, activeThread, handleNewThread } = useHandleNewThread();
@@ -715,6 +828,12 @@ export default function Sidebar() {
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingProjectId, setRenamingProjectId] = useState<ProjectId | null>(null);
   const [renamingProjectTitle, setRenamingProjectTitle] = useState("");
+  const [renamingReportId, setRenamingReportId] = useState<string | null>(null);
+  const [renamingReportTitle, setRenamingReportTitle] = useState("");
+  const [editingReportFolderId, setEditingReportFolderId] = useState<string | null>(null);
+  const [editingReportFolderValue, setEditingReportFolderValue] = useState("");
+  const [selectingReportFolderId, setSelectingReportFolderId] = useState<string | null>(null);
+  const [selectingReportFolderValue, setSelectingReportFolderValue] = useState("");
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<ThreadId | null>(null);
@@ -724,6 +843,10 @@ export default function Sidebar() {
   const { showThreadJumpHints, updateThreadJumpHintsVisibility } = useThreadJumpHintVisibility();
   const projectRenamingCommittedRef = useRef(false);
   const projectRenamingInputRef = useRef<HTMLInputElement | null>(null);
+  const reportRenamingCommittedRef = useRef(false);
+  const reportRenamingInputRef = useRef<HTMLInputElement | null>(null);
+  const reportFolderCommittedRef = useRef(false);
+  const reportFolderInputRef = useRef<HTMLInputElement | null>(null);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<ThreadId, HTMLButtonElement>());
@@ -731,6 +854,15 @@ export default function Sidebar() {
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
+  const [reportSearchQuery, setReportSearchQuery] = useState("");
+  const [projectsExpanded, setProjectsExpanded] = useState(true);
+  const [showAllProjectFolders, setShowAllProjectFolders] = useState(false);
+  const [isNewReportFolderDialogOpen, setIsNewReportFolderDialogOpen] = useState(false);
+  const [isNewReportDialogOpen, setIsNewReportDialogOpen] = useState(false);
+  const [newReportTargetFolder, setNewReportTargetFolder] = useState<string | null>(null);
+  const [creatingReportMode, setCreatingReportMode] = useState<ReportCreationMode | null>(null);
+  const reports = reportsSnapshotQuery.data?.reports ?? EMPTY_REPORTS;
+  const createReportDraft = useCreateReportDraft(reports.length);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -748,6 +880,56 @@ export default function Sidebar() {
       getId: (project) => project.id,
     });
   }, [projectOrder, projects]);
+  const sortedReports = useMemo(
+    () => sortReportsForSidebar(reports, appSettings.sidebarReportSortOrder),
+    [appSettings.sidebarReportSortOrder, reports],
+  );
+  const groupedReports = useMemo(() => groupReportsForSidebar(sortedReports), [sortedReports]);
+  const availableReportFolders = useMemo(
+    () => groupedReports.folderGroups.map((group) => group.label),
+    [groupedReports.folderGroups],
+  );
+  const normalizedReportSearchQuery = reportSearchQuery.trim().toLocaleLowerCase();
+  const filteredProjectFolders = useMemo(() => {
+    if (normalizedReportSearchQuery.length === 0) {
+      return groupedReports.folderGroups;
+    }
+
+    return groupedReports.folderGroups.filter(
+      (group) =>
+        group.label.toLocaleLowerCase().includes(normalizedReportSearchQuery) ||
+        group.reports.some((report) =>
+          reportMatchesSidebarQuery(report, normalizedReportSearchQuery),
+        ),
+    );
+  }, [groupedReports.folderGroups, normalizedReportSearchQuery]);
+  const visibleProjectFolders = useMemo(() => {
+    if (
+      showAllProjectFolders ||
+      filteredProjectFolders.length <= SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT
+    ) {
+      return filteredProjectFolders;
+    }
+
+    return filteredProjectFolders.slice(0, SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT);
+  }, [filteredProjectFolders, showAllProjectFolders]);
+  const activeReport =
+    routeReportId !== null
+      ? (sortedReports.find((report) => report.id === routeReportId) ?? null)
+      : isOnReports
+        ? (sortedReports[0] ?? null)
+        : null;
+  const activeProjectFolder =
+    routeReportId !== null
+      ? (activeReport?.folder ?? null)
+      : isOnReports
+        ? reportsSearch.folder
+        : null;
+  const recentReports = useMemo(() => {
+    return groupedReports.ungroupedReports.filter((report) =>
+      reportMatchesSidebarQuery(report, normalizedReportSearchQuery),
+    );
+  }, [groupedReports.ungroupedReports, normalizedReportSearchQuery]);
   const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(
     () =>
       orderedProjects.map((project) => ({
@@ -896,6 +1078,40 @@ export default function Sidebar() {
       shouldBrowseForProjectImmediately,
       appSettings.defaultThreadEnvMode,
     ],
+  );
+
+  const openCreateReportDialog = useCallback((initialFolder?: string | null) => {
+    setNewReportTargetFolder(initialFolder?.trim() ?? null);
+    setIsNewReportDialogOpen(true);
+  }, []);
+
+  const handleCreateReportFolder = useCallback(
+    (folderName: string) => {
+      const trimmedFolderName = folderName.trim();
+      if (trimmedFolderName.length === 0) {
+        return;
+      }
+
+      setIsNewReportFolderDialogOpen(false);
+      openCreateReportDialog(trimmedFolderName);
+    },
+    [openCreateReportDialog],
+  );
+
+  const handleCreateReportSelection = useCallback(
+    async (mode: ReportCreationMode) => {
+      setCreatingReportMode(mode);
+      const created = await createReportDraft({
+        mode,
+        folder: newReportTargetFolder,
+      });
+      if (created) {
+        setIsNewReportDialogOpen(false);
+        setNewReportTargetFolder(null);
+      }
+      setCreatingReportMode(null);
+    },
+    [createReportDraft, newReportTargetFolder],
   );
 
   const handleAddProject = () => {
@@ -1052,6 +1268,104 @@ export default function Sidebar() {
     [],
   );
 
+  const finishReportRename = useCallback(() => {
+    setRenamingReportId(null);
+    reportRenamingInputRef.current = null;
+  }, []);
+
+  const finishReportFolderEdit = useCallback(() => {
+    setEditingReportFolderId(null);
+    setEditingReportFolderValue("");
+    reportFolderInputRef.current = null;
+  }, []);
+
+  const finishReportFolderSelection = useCallback(() => {
+    setSelectingReportFolderId(null);
+    setSelectingReportFolderValue("");
+  }, []);
+
+  const commitReportRename = useCallback(
+    async (reportId: ReportRecord["id"], newTitle: string, originalTitle: string) => {
+      const trimmed = newTitle.trim();
+      if (trimmed.length === 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Report title cannot be empty",
+        });
+        finishReportRename();
+        return;
+      }
+      if (trimmed === originalTitle) {
+        finishReportRename();
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        finishReportRename();
+        return;
+      }
+      try {
+        await api.reports.updateMeta({
+          reportId,
+          title: trimmed,
+        });
+        await queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to rename report",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+      finishReportRename();
+    },
+    [finishReportRename, queryClient],
+  );
+
+  const commitReportFolder = useCallback(
+    async (report: ReportRecord, nextFolderValue: string) => {
+      const folder = nextFolderValue.trim();
+      const normalizedFolder = folder.length > 0 ? folder : null;
+      if ((report.folder ?? null) === normalizedFolder) {
+        finishReportFolderEdit();
+        return;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        finishReportFolderEdit();
+        return;
+      }
+      try {
+        await api.reports.updateMeta({
+          reportId: report.id,
+          folder: normalizedFolder,
+        });
+        await queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to update report folder",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+      finishReportFolderEdit();
+    },
+    [finishReportFolderEdit, queryClient],
+  );
+
+  const commitExistingReportFolderSelection = useCallback(
+    async (report: ReportRecord, selectedFolder: string) => {
+      const normalizedFolder = selectedFolder.trim();
+      if (normalizedFolder.length === 0) {
+        finishReportFolderSelection();
+        return;
+      }
+      await commitReportFolder(report, normalizedFolder);
+      finishReportFolderSelection();
+    },
+    [commitReportFolder, finishReportFolderSelection],
+  );
+
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
     threadId: ThreadId;
   }>({
@@ -1066,6 +1380,24 @@ export default function Sidebar() {
       toastManager.add({
         type: "error",
         title: "Failed to copy thread ID",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
+  });
+  const { copyToClipboard: copyReportIdToClipboard } = useCopyToClipboard<{
+    reportId: string;
+  }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: "Report ID copied",
+        description: ctx.reportId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to copy report ID",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     },
@@ -1213,6 +1545,156 @@ export default function Sidebar() {
       selectedThreadIds,
       sidebarThreadsById,
     ],
+  );
+
+  const deleteReport = useCallback(
+    async (report: ReportRecord) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+
+      const fallbackReportId =
+        sortedReports.find((candidate) => candidate.id !== report.id)?.id ?? null;
+
+      try {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Delete report "${report.title}"?`,
+            "This removes the report plan, run state, and generated metadata.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return;
+        }
+
+        await api.reports.delete(report.id);
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to delete report",
+          description: toSidebarActionErrorMessage(error),
+        });
+        return;
+      }
+
+      queryClient.setQueryData(
+        reportQueryKeys.snapshot(),
+        (
+          current:
+            | {
+                readonly reports: ReadonlyArray<ReportRecord>;
+              }
+            | undefined,
+        ) => ({
+          reports: (current?.reports ?? []).filter((candidate) => candidate.id !== report.id),
+        }),
+      );
+
+      try {
+        if (routeReportId === report.id) {
+          if (fallbackReportId) {
+            await navigate({
+              to: "/reports/$reportId",
+              params: { reportId: fallbackReportId },
+              replace: true,
+            });
+          } else {
+            await navigate({
+              to: "/reports",
+              replace: true,
+            });
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to redirect after deleting report", {
+          reportId: report.id,
+          error: toSidebarActionErrorMessage(error),
+        });
+      }
+
+      void queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+    },
+    [navigate, queryClient, routeReportId, sortedReports],
+  );
+
+  const handleReportContextMenu = useCallback(
+    async (report: ReportRecord, position: { x: number; y: number }) => {
+      const api = readNativeApi();
+      if (!api) {
+        return;
+      }
+
+      const existingFolderOptions = availableReportFolders.filter(
+        (folder) => folder !== (report.folder ?? null),
+      );
+
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "rename", label: "Rename report" },
+          {
+            id: "move-folder-existing",
+            label: "Move to existing folder",
+            disabled: existingFolderOptions.length === 0,
+          },
+          { id: "move-folder-new", label: "Move to new folder" },
+          ...(report.folder
+            ? ([{ id: "remove-folder", label: "Remove from folder" }] as const)
+            : []),
+          { id: "copy-report-id", label: "Copy Report ID" },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position,
+      );
+
+      if (clicked === "rename") {
+        setEditingReportFolderId(null);
+        setSelectingReportFolderId(null);
+        setSelectingReportFolderValue("");
+        reportFolderInputRef.current = null;
+        setRenamingReportId(report.id);
+        setRenamingReportTitle(report.title);
+        reportRenamingCommittedRef.current = false;
+        return;
+      }
+
+      if (clicked === "move-folder-existing") {
+        setRenamingReportId(null);
+        reportRenamingInputRef.current = null;
+        setEditingReportFolderId(null);
+        setEditingReportFolderValue("");
+        reportFolderInputRef.current = null;
+        setSelectingReportFolderId(report.id);
+        setSelectingReportFolderValue("");
+        return;
+      }
+
+      if (clicked === "move-folder-new") {
+        setRenamingReportId(null);
+        reportRenamingInputRef.current = null;
+        setSelectingReportFolderId(null);
+        setSelectingReportFolderValue("");
+        setEditingReportFolderId(report.id);
+        setEditingReportFolderValue(report.folder ?? "");
+        reportFolderCommittedRef.current = false;
+        return;
+      }
+
+      if (clicked === "remove-folder") {
+        await commitReportFolder(report, "");
+        return;
+      }
+
+      if (clicked === "copy-report-id") {
+        copyReportIdToClipboard(report.id, { reportId: report.id });
+        return;
+      }
+
+      if (clicked === "delete") {
+        await deleteReport(report);
+      }
+    },
+    [availableReportFolders, commitReportFolder, copyReportIdToClipboard, deleteReport],
   );
 
   const handleThreadClick = useCallback(
@@ -2043,6 +2525,190 @@ export default function Sidebar() {
     });
   }, []);
 
+  function renderReportRow(report: ReportRecord) {
+    const isActive =
+      routeReportId === report.id ||
+      (routeReportId === null &&
+        isOnReports &&
+        reportsSearch.folder === null &&
+        sortedReports[0]?.id === report.id);
+    const existingFolderOptions = availableReportFolders.filter(
+      (folder) => folder !== (report.folder ?? null),
+    );
+
+    return (
+      <SidebarMenuItem key={report.id}>
+        <div className="group/report-row relative">
+          <SidebarMenuButton
+            size="sm"
+            isActive={isActive}
+            className={`h-auto min-h-10 items-start gap-2 rounded-xl px-2.5 pt-1.5 pb-2 pr-9 text-left ${
+              isActive
+                ? "bg-primary/9 text-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-blue-500)_18%,transparent)] hover:bg-primary/11"
+                : ""
+            }`}
+            onClick={() =>
+              void navigate({
+                to: "/reports/$reportId",
+                params: { reportId: report.id },
+              })
+            }
+            onContextMenu={(event) => {
+              event.preventDefault();
+              void handleReportContextMenu(report, {
+                x: event.clientX,
+                y: event.clientY,
+              });
+            }}
+          >
+            <FileTextIcon className="mt-0.5 size-3.5 shrink-0 text-foreground/75" />
+            <div className="min-w-0 flex-1">
+              {renamingReportId === report.id ? (
+                <input
+                  ref={(element) => {
+                    if (element && reportRenamingInputRef.current !== element) {
+                      reportRenamingInputRef.current = element;
+                      element.focus();
+                      element.select();
+                    }
+                  }}
+                  className="min-w-0 w-full truncate rounded border border-ring bg-transparent px-0.5 text-xs font-medium text-foreground/90 outline-none"
+                  value={renamingReportTitle}
+                  onChange={(event) => setRenamingReportTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      reportRenamingCommittedRef.current = true;
+                      void commitReportRename(report.id, renamingReportTitle, report.title);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      reportRenamingCommittedRef.current = true;
+                      finishReportRename();
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!reportRenamingCommittedRef.current) {
+                      void commitReportRename(report.id, renamingReportTitle, report.title);
+                    }
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                />
+              ) : (
+                <div className="truncate text-[13px] leading-5 font-medium text-foreground/90">
+                  {report.title}
+                </div>
+              )}
+              {editingReportFolderId === report.id ? (
+                <input
+                  ref={(element) => {
+                    if (element && reportFolderInputRef.current !== element) {
+                      reportFolderInputRef.current = element;
+                      element.focus();
+                      element.select();
+                    }
+                  }}
+                  className="mt-1 min-w-0 w-full truncate rounded border border-ring bg-transparent px-0.5 text-[10px] text-muted-foreground outline-none"
+                  placeholder="Folder name"
+                  value={editingReportFolderValue}
+                  onChange={(event) => setEditingReportFolderValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    event.stopPropagation();
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      reportFolderCommittedRef.current = true;
+                      void commitReportFolder(report, editingReportFolderValue);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      reportFolderCommittedRef.current = true;
+                      finishReportFolderEdit();
+                    }
+                  }}
+                  onBlur={() => {
+                    if (!reportFolderCommittedRef.current) {
+                      void commitReportFolder(report, editingReportFolderValue);
+                    }
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                />
+              ) : selectingReportFolderId === report.id ? (
+                <div
+                  className="mt-1 flex items-center gap-1.5"
+                  onClick={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <Select
+                    value={selectingReportFolderValue}
+                    onValueChange={(value) => {
+                      if (value === null) {
+                        return;
+                      }
+                      setSelectingReportFolderValue(value);
+                      void commitExistingReportFolderSelection(report, value);
+                    }}
+                  >
+                    <SelectTrigger
+                      size="xs"
+                      className="h-6 min-w-0 flex-1 rounded-md border-border bg-transparent text-[10px] text-muted-foreground"
+                      aria-label={`Move ${report.title} to an existing folder`}
+                    >
+                      <SelectValue placeholder="Select folder" />
+                    </SelectTrigger>
+                    <SelectPopup align="start" side="bottom" alignItemWithTrigger={false}>
+                      {existingFolderOptions.map((folder) => (
+                        <SelectItem hideIndicator key={folder} value={folder}>
+                          {folder}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md px-1.5 py-1 text-[10px] text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      finishReportFolderSelection();
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[11px] leading-4 text-muted-foreground/70">
+                  {report.folder ? `${report.folder} · ` : ""}
+                  {formatRelativeTimeLabel(report.updatedAt)}
+                </div>
+              )}
+            </div>
+            <span
+              className={`mt-0.5 inline-flex shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide ${reportStatusClassName(report.status)}`}
+            >
+              {report.status}
+            </span>
+          </SidebarMenuButton>
+          <SidebarMenuAction
+            render={<button type="button" aria-label={`Manage ${report.title}`} />}
+            showOnHover
+            className="top-1.5 right-1.5 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              void handleReportContextMenu(report, {
+                x: rect.left,
+                y: rect.bottom,
+              });
+            }}
+          >
+            <SquarePenIcon className="size-3.5" />
+          </SidebarMenuAction>
+        </div>
+      </SidebarMenuItem>
+    );
+  }
+
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
@@ -2050,9 +2716,9 @@ export default function Sidebar() {
         <TooltipTrigger
           render={
             <Link
-              aria-label="Go to threads"
+              aria-label="Go to reports"
               className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
-              to="/"
+              to="/reports"
             >
               <T3Wordmark />
               <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
@@ -2070,6 +2736,8 @@ export default function Sidebar() {
       </Tooltip>
     </div>
   );
+
+  const showLegacyAgentWorkspaces = false;
 
   return (
     <>
@@ -2111,142 +2779,283 @@ export default function Sidebar() {
                 </Alert>
               </SidebarGroup>
             ) : null}
-            <SidebarGroup className="px-2 py-2">
-              <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                  Projects
-                </span>
-                <div className="flex items-center gap-1">
-                  <ProjectSortMenu
-                    projectSortOrder={appSettings.sidebarProjectSortOrder}
-                    threadSortOrder={appSettings.sidebarThreadSortOrder}
-                    onProjectSortOrderChange={(sortOrder) => {
-                      updateSettings({ sidebarProjectSortOrder: sortOrder });
-                    }}
-                    onThreadSortOrderChange={(sortOrder) => {
-                      updateSettings({ sidebarThreadSortOrder: sortOrder });
-                    }}
-                  />
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          aria-label={
-                            shouldShowProjectPathEntry ? "Cancel add project" : "Add project"
-                          }
-                          aria-pressed={shouldShowProjectPathEntry}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                          onClick={handleStartAddProject}
-                        />
-                      }
+            <SidebarGroup className="px-2 pt-2 pb-0">
+              <div className="space-y-3">
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      size="sm"
+                      variant="outline"
+                      className="min-h-11 gap-2 rounded-2xl bg-muted/40 px-3 text-left text-[15px] font-medium hover:bg-accent"
+                      onClick={() => openCreateReportDialog()}
                     >
-                      <PlusIcon
-                        className={`size-3.5 transition-transform duration-150 ${
-                          shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
+                      <PlusIcon className="size-4 shrink-0" />
+                      <span>New Report</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+
+                <div className="relative px-1">
+                  <SearchIcon className="pointer-events-none absolute top-1/2 left-4 size-4 -translate-y-1/2 text-muted-foreground/70" />
+                  <input
+                    type="search"
+                    value={reportSearchQuery}
+                    onChange={(event) => setReportSearchQuery(event.target.value)}
+                    placeholder="Search reports"
+                    className="h-9 w-full rounded-2xl border border-border/70 bg-muted/20 pr-3 pl-9 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-ring"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 px-2 text-left text-sm font-medium text-muted-foreground/80 transition-colors hover:text-foreground"
+                      onClick={() => setProjectsExpanded((current) => !current)}
+                    >
+                      <ChevronRightIcon
+                        className={`size-3.5 shrink-0 transition-transform duration-150 ${
+                          projectsExpanded ? "rotate-90" : ""
                         }`}
                       />
-                    </TooltipTrigger>
-                    <TooltipPopup side="right">
-                      {shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                    </TooltipPopup>
-                  </Tooltip>
+                      <span>Projects</span>
+                    </button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label="Create project folder"
+                            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground"
+                            onClick={() => setIsNewReportFolderDialogOpen(true)}
+                          />
+                        }
+                      >
+                        <PlusIcon className="size-4" />
+                      </TooltipTrigger>
+                      <TooltipPopup side="right">New project folder</TooltipPopup>
+                    </Tooltip>
+                  </div>
+
+                  {projectsExpanded ? (
+                    <div className="mt-2 ml-4 border-border/70 border-l pl-3">
+                      <SidebarMenu>
+                        {visibleProjectFolders.map((group) => {
+                          const isSelected = activeProjectFolder === group.label;
+                          return (
+                            <SidebarMenuItem key={group.key}>
+                              <SidebarMenuButton
+                                size="sm"
+                                isActive={isSelected}
+                                className="min-h-9 gap-2 rounded-xl px-2.5 py-1.5 text-left"
+                                onClick={() =>
+                                  void navigate({
+                                    to: "/reports",
+                                    search: () => ({ folder: group.label }) as never,
+                                  })
+                                }
+                              >
+                                <FolderIcon className="size-3.5 shrink-0 text-foreground/75" />
+                                <span className="flex-1 truncate text-[13px] font-medium">
+                                  {group.label}
+                                </span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          );
+                        })}
+
+                        {filteredProjectFolders.length > SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT ? (
+                          <SidebarMenuItem>
+                            <SidebarMenuButton
+                              size="sm"
+                              className="min-h-9 gap-2 rounded-xl px-2.5 py-1.5 text-left text-muted-foreground/80"
+                              onClick={() => setShowAllProjectFolders((current) => !current)}
+                            >
+                              <EllipsisIcon className="size-3.5 shrink-0" />
+                              <span>{showAllProjectFolders ? "Show less" : "More"}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        ) : null}
+
+                        {filteredProjectFolders.length === 0 ? (
+                          <SidebarMenuItem>
+                            <div className="px-3 py-2 text-xs text-muted-foreground/60">
+                              No folders found
+                            </div>
+                          </SidebarMenuItem>
+                        ) : null}
+                      </SidebarMenu>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div>
+                  <div className="mb-2 flex items-center justify-between pl-3 pr-1.5">
+                    <span className="text-sm font-medium text-muted-foreground/80">Recent</span>
+                    <ReportSortMenu
+                      reportSortOrder={appSettings.sidebarReportSortOrder}
+                      onReportSortOrderChange={(sortOrder) => {
+                        updateSettings({ sidebarReportSortOrder: sortOrder });
+                      }}
+                    />
+                  </div>
+
+                  <SidebarMenu>
+                    {recentReports.length === 0 ? (
+                      <SidebarMenuItem>
+                        <div className="px-3 py-2 text-xs text-muted-foreground/60">
+                          No reports found
+                        </div>
+                      </SidebarMenuItem>
+                    ) : (
+                      recentReports.map((report) => renderReportRow(report))
+                    )}
+                  </SidebarMenu>
                 </div>
               </div>
-              {shouldShowProjectPathEntry && (
-                <div className="mb-2 px-1">
-                  {isElectron && (
-                    <button
-                      type="button"
-                      className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => void handlePickFolder()}
-                      disabled={isPickingFolder || isAddingProject}
-                    >
-                      <FolderIcon className="size-3.5" />
-                      {isPickingFolder ? "Picking folder..." : "Browse for folder"}
-                    </button>
-                  )}
-                  <div className="flex gap-1.5">
-                    <input
-                      ref={addProjectInputRef}
-                      className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
-                        addProjectError
-                          ? "border-red-500/70 focus:border-red-500"
-                          : "border-border focus:border-ring"
-                      }`}
-                      placeholder="/path/to/project"
-                      value={newCwd}
-                      onChange={(event) => {
-                        setNewCwd(event.target.value);
-                        setAddProjectError(null);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") handleAddProject();
-                        if (event.key === "Escape") {
-                          setAddingProject(false);
-                          setAddProjectError(null);
-                        }
-                      }}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
-                      onClick={handleAddProject}
-                      disabled={!canAddProject}
-                    >
-                      {isAddingProject ? "Adding..." : "Add"}
-                    </button>
-                  </div>
-                  {addProjectError && (
-                    <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
-                      {addProjectError}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {isManualProjectSorting ? (
-                <DndContext
-                  sensors={projectDnDSensors}
-                  collisionDetection={projectCollisionDetection}
-                  modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-                  onDragStart={handleProjectDragStart}
-                  onDragEnd={handleProjectDragEnd}
-                  onDragCancel={handleProjectDragCancel}
-                >
-                  <SidebarMenu>
-                    <SortableContext
-                      items={renderedProjects.map((renderedProject) => renderedProject.project.id)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {renderedProjects.map((renderedProject) => (
-                        <SortableProjectItem
-                          key={renderedProject.project.id}
-                          projectId={renderedProject.project.id}
-                        >
-                          {(dragHandleProps) => renderProjectItem(renderedProject, dragHandleProps)}
-                        </SortableProjectItem>
-                      ))}
-                    </SortableContext>
-                  </SidebarMenu>
-                </DndContext>
-              ) : (
-                <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-                  {renderedProjects.map((renderedProject) => (
-                    <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
-                      {renderProjectItem(renderedProject, null)}
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              )}
-
-              {projects.length === 0 && !shouldShowProjectPathEntry && (
-                <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-                  No projects yet
-                </div>
-              )}
             </SidebarGroup>
+            {showLegacyAgentWorkspaces ? (
+              <SidebarGroup className="px-2 py-2">
+                <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                    Agent Workspaces
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <ProjectSortMenu
+                      projectSortOrder={appSettings.sidebarProjectSortOrder}
+                      threadSortOrder={appSettings.sidebarThreadSortOrder}
+                      onProjectSortOrderChange={(sortOrder) => {
+                        updateSettings({ sidebarProjectSortOrder: sortOrder });
+                      }}
+                      onThreadSortOrderChange={(sortOrder) => {
+                        updateSettings({ sidebarThreadSortOrder: sortOrder });
+                      }}
+                    />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-label={
+                              shouldShowProjectPathEntry ? "Cancel add project" : "Add project"
+                            }
+                            aria-pressed={shouldShowProjectPathEntry}
+                            className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                            onClick={handleStartAddProject}
+                          />
+                        }
+                      >
+                        <PlusIcon
+                          className={`size-3.5 transition-transform duration-150 ${
+                            shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
+                          }`}
+                        />
+                      </TooltipTrigger>
+                      <TooltipPopup side="right">
+                        {shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
+                      </TooltipPopup>
+                    </Tooltip>
+                  </div>
+                </div>
+                {shouldShowProjectPathEntry && (
+                  <div className="mb-2 px-1">
+                    {isElectron && (
+                      <button
+                        type="button"
+                        className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => void handlePickFolder()}
+                        disabled={isPickingFolder || isAddingProject}
+                      >
+                        <FolderIcon className="size-3.5" />
+                        {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+                      </button>
+                    )}
+                    <div className="flex gap-1.5">
+                      <input
+                        ref={addProjectInputRef}
+                        className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                          addProjectError
+                            ? "border-red-500/70 focus:border-red-500"
+                            : "border-border focus:border-ring"
+                        }`}
+                        placeholder="/path/to/project"
+                        value={newCwd}
+                        onChange={(event) => {
+                          setNewCwd(event.target.value);
+                          setAddProjectError(null);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") handleAddProject();
+                          if (event.key === "Escape") {
+                            setAddingProject(false);
+                            setAddProjectError(null);
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                        onClick={handleAddProject}
+                        disabled={!canAddProject}
+                      >
+                        {isAddingProject ? "Adding..." : "Add"}
+                      </button>
+                    </div>
+                    {addProjectError && (
+                      <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
+                        {addProjectError}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {isManualProjectSorting ? (
+                  <DndContext
+                    sensors={projectDnDSensors}
+                    collisionDetection={projectCollisionDetection}
+                    modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                    onDragStart={handleProjectDragStart}
+                    onDragEnd={handleProjectDragEnd}
+                    onDragCancel={handleProjectDragCancel}
+                  >
+                    <SidebarMenu>
+                      <SortableContext
+                        items={renderedProjects.map(
+                          (renderedProject) => renderedProject.project.id,
+                        )}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {renderedProjects.map((renderedProject) => (
+                          <SortableProjectItem
+                            key={renderedProject.project.id}
+                            projectId={renderedProject.project.id}
+                          >
+                            {(dragHandleProps) =>
+                              renderProjectItem(renderedProject, dragHandleProps)
+                            }
+                          </SortableProjectItem>
+                        ))}
+                      </SortableContext>
+                    </SidebarMenu>
+                  </DndContext>
+                ) : (
+                  <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+                    {renderedProjects.map((renderedProject) => (
+                      <SidebarMenuItem key={renderedProject.project.id} className="rounded-md">
+                        {renderProjectItem(renderedProject, null)}
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenu>
+                )}
+
+                {projects.length === 0 && !shouldShowProjectPathEntry && (
+                  <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+                    No projects yet
+                  </div>
+                )}
+              </SidebarGroup>
+            ) : null}
           </SidebarContent>
 
           <SidebarSeparator />
@@ -2267,6 +3076,24 @@ export default function Sidebar() {
           </SidebarFooter>
         </>
       )}
+      <NewReportFolderDialog
+        open={isNewReportFolderDialogOpen}
+        onOpenChange={setIsNewReportFolderDialogOpen}
+        onConfirm={handleCreateReportFolder}
+      />
+      <NewReportDialog
+        open={isNewReportDialogOpen}
+        busyMode={creatingReportMode}
+        targetFolder={newReportTargetFolder}
+        onOpenChange={(open) => {
+          setIsNewReportDialogOpen(open);
+          if (!open) {
+            setNewReportTargetFolder(null);
+            setCreatingReportMode(null);
+          }
+        }}
+        onSelect={handleCreateReportSelection}
+      />
     </>
   );
 }

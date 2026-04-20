@@ -22,6 +22,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
   SidebarProjectSortOrder,
+  SidebarReportSortOrder,
   SidebarThreadSortOrder,
   TimestampFormat,
   UnifiedSettings,
@@ -208,6 +209,15 @@ export function buildLegacyClientSettingsMigrationPatch(
 
   if (Schema.is(SidebarProjectSortOrder)(legacySettings.sidebarProjectSortOrder)) {
     patch.sidebarProjectSortOrder = legacySettings.sidebarProjectSortOrder;
+  }
+
+  if (Schema.is(SidebarReportSortOrder)(legacySettings.sidebarReportSortOrder)) {
+    patch.sidebarReportSortOrder = legacySettings.sidebarReportSortOrder;
+  } else if (
+    legacySettings.sidebarProjectSortOrder === "updated_at" ||
+    legacySettings.sidebarProjectSortOrder === "created_at"
+  ) {
+    patch.sidebarReportSortOrder = legacySettings.sidebarProjectSortOrder;
   }
 
   if (Schema.is(SidebarThreadSortOrder)(legacySettings.sidebarThreadSortOrder)) {
