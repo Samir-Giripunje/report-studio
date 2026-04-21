@@ -284,55 +284,6 @@ function makeProviderServiceLayer() {
   };
 }
 
-it.effect("ProviderServiceLive rejects new sessions for disabled providers", () =>
-  Effect.gen(function* () {
-    const codex = makeFakeCodexAdapter();
-    const claude = makeFakeCodexAdapter("claudeAgent");
-    const registry: typeof ProviderAdapterRegistry.Service = {
-      getByProvider: (provider) =>
-        provider === "codex"
-          ? Effect.succeed(codex.adapter)
-          : provider === "claudeAgent"
-            ? Effect.succeed(claude.adapter)
-            : Effect.fail(new ProviderUnsupportedError({ provider })),
-      listProviders: () => Effect.succeed(["codex", "claudeAgent"]),
-    };
-    const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
-    const serverSettingsLayer = ServerSettingsService.layerTest({
-      providers: {
-        claudeAgent: {
-          enabled: false,
-        },
-      },
-    });
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
-      Layer.provide(SqlitePersistenceMemory),
-    );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
-    const providerLayer = makeProviderServiceLive().pipe(
-      Layer.provide(providerAdapterLayer),
-      Layer.provide(directoryLayer),
-      Layer.provide(serverSettingsLayer),
-      Layer.provide(AnalyticsService.layerTest),
-    );
-
-    const failure = yield* Effect.flip(
-      Effect.gen(function* () {
-        const provider = yield* ProviderService;
-        return yield* provider.startSession(asThreadId("thread-disabled"), {
-          provider: "claudeAgent",
-          threadId: asThreadId("thread-disabled"),
-          runtimeMode: "full-access",
-        });
-      }).pipe(Effect.provide(providerLayer)),
-    );
-
-    assert.instanceOf(failure, ProviderValidationError);
-    assert.include(failure.issue, "Provider 'claudeAgent' is disabled in T3 Code settings.");
-    assert.equal(claude.startSession.mock.calls.length, 0);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
 const routing = makeProviderServiceLayer();
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
@@ -705,9 +656,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
         modelSelection: {
           provider: "claudeAgent",
           model: "claude-opus-4-6",
-          options: {
-            effort: "max",
-          },
         },
         runtimeMode: "full-access",
       });
@@ -738,9 +686,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.deepEqual(startPayload.modelSelection, {
           provider: "claudeAgent",
           model: "claude-opus-4-6",
-          options: {
-            effort: "max",
-          },
         });
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);

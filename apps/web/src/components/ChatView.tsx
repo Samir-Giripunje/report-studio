@@ -1,7 +1,5 @@
 import {
   type ApprovalRequestId,
-  DEFAULT_MODEL_BY_PROVIDER,
-  type ClaudeCodeEffort,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -20,7 +18,16 @@ import {
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
-import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
+import { normalizeModelSlug } from "@t3tools/shared/model";
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
+  codex: "gpt-4o",
+  claudeAgent: "claude-sonnet-4-5",
+};
+
+function applyUltrathinkPrefix(text: string): string {
+  return `Ultrathink:\n${text}`;
+}
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -293,7 +300,7 @@ function formatOutgoingPrompt(params: {
 }): string {
   const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
   if (params.effort && caps.promptInjectedEffortLevels.includes(params.effort)) {
-    return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeCodeEffort | null);
+    return applyUltrathinkPrefix(params.text);
   }
   return params.text;
 }
@@ -1022,7 +1029,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  const selectedModelSelection = useMemo<ModelSelection>(
+  const selectedModelSelection = useMemo(
     () => ({
       provider: selectedProvider,
       model: selectedModel,
@@ -2030,9 +2037,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (
         input.modelSelection !== undefined &&
         (input.modelSelection.model !== serverThread.modelSelection.model ||
-          input.modelSelection.provider !== serverThread.modelSelection.provider ||
-          JSON.stringify(input.modelSelection.options ?? null) !==
-            JSON.stringify(serverThread.modelSelection.options ?? null))
+          input.modelSelection.provider !== serverThread.modelSelection.provider)
       ) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
@@ -3017,7 +3022,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
       }
       const title = truncate(titleSeed);
-      const threadCreateModelSelection: ModelSelection = {
+      const threadCreateModelSelection = {
         provider: selectedProvider,
         model:
           selectedModel ||

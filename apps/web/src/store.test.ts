@@ -1,6 +1,5 @@
 import {
   CheckpointRef,
-  DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   MessageId,
   ProjectId,
@@ -9,6 +8,11 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
+
+const DEFAULT_MODEL_BY_PROVIDER = {
+  codex: "gpt-4o",
+  claudeAgent: "claude-sonnet-4-5",
+} as const;
 import { describe, expect, it } from "vitest";
 
 import {

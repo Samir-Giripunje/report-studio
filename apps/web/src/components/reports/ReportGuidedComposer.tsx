@@ -1,11 +1,21 @@
-import type { ReportPlanningMessage, ReportPlanningStatus, ReportRecord } from "@t3tools/contracts";
-import { normalizeReportFileRefs } from "@t3tools/shared/report";
+import type {
+  ModelSelection,
+  ProviderApiKeys,
+  ProviderKind,
+  ReportPlanningMessage,
+  ReportPlanningStatus,
+  ReportRecord,
+  ReportSourceDocument,
+} from "@t3tools/contracts";
 import {
   CheckIcon,
   FileTextIcon,
+  LoaderCircleIcon,
   MessageSquareMoreIcon,
   PaperclipIcon,
+  PencilIcon,
   PlayIcon,
+  SaveIcon,
   SendHorizontalIcon,
   UploadIcon,
   XIcon,
@@ -13,6 +23,11 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { toastManager } from "~/components/ui/toast";
+import {
+  normalizeReportSourceDocuments,
+  readReportSourceDocument,
+  reportFileRefsFromDocuments,
+} from "~/lib/reportDocuments";
 import {
   findMatchingReportPromptTemplate,
   REPORT_GUIDED_PROMPT_TEMPLATES,
@@ -22,6 +37,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Textarea } from "../ui/textarea";
+import { ReportMarkdown } from "./ReportMarkdown";
+import { ReportModelControl } from "./ReportModelControl";
 
 function fileRefArraysEqual(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
   if (left.length !== right.length) {
@@ -29,6 +46,24 @@ function fileRefArraysEqual(left: ReadonlyArray<string>, right: ReadonlyArray<st
   }
 
   return left.every((value, index) => value === right[index]);
+}
+
+function reportSourceDocumentsEqual(
+  left: ReadonlyArray<ReportSourceDocument>,
+  right: ReadonlyArray<ReportSourceDocument>,
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => {
+    const candidate = right[index];
+    return (
+      candidate?.name === value.name &&
+      candidate?.mimeType === value.mimeType &&
+      candidate?.textContent === value.textContent
+    );
+  });
 }
 
 function planningStatusMeta(status: ReportPlanningStatus): {
@@ -82,22 +117,49 @@ function messageRoleLabel(role: ReportPlanningMessage["role"]): string {
 export function ReportGuidedComposer(props: {
   report: ReportRecord;
   busy: boolean;
-  onStartPlanning: (input: { brief: string; fileRefs: string[] }) => Promise<void>;
+  modelSelection: ModelSelection;
+  providerApiKeys: ProviderApiKeys;
+  onStartPlanning: (input: {
+    brief: string;
+    fileRefs: string[];
+    documents: ReportSourceDocument[];
+  }) => Promise<void>;
   onRespond: (response: string) => Promise<void>;
   onApprove: () => Promise<void>;
   onStartRun: () => Promise<void>;
+  onUpdateArtifact: (content: string) => Promise<boolean | undefined>;
+  onModelSelectionChange: (provider: ProviderKind, model: string) => void;
 }) {
   const savedBrief = props.report.plan.metadata.brief;
+  const savedDocuments = useMemo(
+    () =>
+      normalizeReportSourceDocuments(
+        props.report.plan.globalSourceConfig.userDocuments.documents.length > 0
+          ? props.report.plan.globalSourceConfig.userDocuments.documents
+          : props.report.plan.globalSourceConfig.userDocuments.fileRefs.map((fileRef) => ({
+              name: fileRef,
+              mimeType: "application/octet-stream",
+              textContent: "",
+            })),
+      ),
+    [
+      props.report.plan.globalSourceConfig.userDocuments.documents,
+      props.report.plan.globalSourceConfig.userDocuments.fileRefs,
+    ],
+  );
   const savedFileRefs = useMemo(
-    () => normalizeReportFileRefs(props.report.plan.globalSourceConfig.userDocuments.fileRefs),
-    [props.report.plan.globalSourceConfig.userDocuments.fileRefs],
+    () => reportFileRefsFromDocuments(savedDocuments),
+    [savedDocuments],
   );
   const planning = props.report.plan.planning;
   const statusMeta = planningStatusMeta(planning.status);
 
   const [briefDraft, setBriefDraft] = useState(savedBrief);
-  const [attachedFileRefs, setAttachedFileRefs] = useState<string[]>(savedFileRefs);
+  const [attachedDocuments, setAttachedDocuments] =
+    useState<ReportSourceDocument[]>(savedDocuments);
   const [responseDraft, setResponseDraft] = useState("");
+  const [isEditingArtifact, setIsEditingArtifact] = useState(false);
+  const [artifactDraft, setArtifactDraft] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepthRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -109,14 +171,20 @@ export function ReportGuidedComposer(props: {
     }
     previousReportIdRef.current = props.report.id;
     setBriefDraft(savedBrief);
-    setAttachedFileRefs(savedFileRefs);
+    setAttachedDocuments(savedDocuments);
     setResponseDraft("");
-  }, [props.report.id, savedBrief, savedFileRefs]);
+    setIsEditingArtifact(false);
+    setArtifactDraft("");
+  }, [props.report.id, savedBrief, savedDocuments]);
 
   const normalizedBrief = briefDraft.trim();
+  const normalizedAttachedDocuments = useMemo(
+    () => normalizeReportSourceDocuments(attachedDocuments),
+    [attachedDocuments],
+  );
   const normalizedAttachedFileRefs = useMemo(
-    () => normalizeReportFileRefs(attachedFileRefs),
-    [attachedFileRefs],
+    () => reportFileRefsFromDocuments(normalizedAttachedDocuments),
+    [normalizedAttachedDocuments],
   );
   const activePromptTemplate = useMemo(
     () => findMatchingReportPromptTemplate(briefDraft),
@@ -124,7 +192,8 @@ export function ReportGuidedComposer(props: {
   );
   const hasUnsavedChanges =
     normalizedBrief !== savedBrief ||
-    !fileRefArraysEqual(normalizedAttachedFileRefs, savedFileRefs);
+    !fileRefArraysEqual(normalizedAttachedFileRefs, savedFileRefs) ||
+    !reportSourceDocumentsEqual(normalizedAttachedDocuments, savedDocuments);
   const canRespond =
     planning.status === "clarification-needed" || planning.status === "awaiting-approval";
   const hasPlanningContent =
@@ -133,29 +202,38 @@ export function ReportGuidedComposer(props: {
     canRespond ||
     planning.status === "approved";
   const normalizedResponse = responseDraft.trim();
-  const primaryActionLabel =
-    planning.conversation.length === 0
-      ? "Start planning orchestration"
-      : "Re-run planning orchestration";
+  const primaryActionLabel = planning.conversation.length === 0 ? "Plan report" : "Re-plan";
 
-  const attachFiles = (files: ReadonlyArray<File>) => {
+  const attachFiles = async (files: ReadonlyArray<File>) => {
     if (files.length === 0) {
       return;
     }
 
-    setAttachedFileRefs((current) =>
-      normalizeReportFileRefs([...current, ...files.map((file) => file.name)]),
-    );
+    try {
+      const nextDocuments = await Promise.all(files.map((file) => readReportSourceDocument(file)));
+      setAttachedDocuments((current) =>
+        normalizeReportSourceDocuments([...current, ...nextDocuments]),
+      );
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: "Upload failed",
+        description:
+          cause instanceof Error
+            ? cause.message
+            : "The selected files could not be prepared for report planning.",
+      });
+    }
   };
 
   const handleUploadFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
-    attachFiles(Array.from(event.target.files ?? []));
+    void attachFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   };
 
   const handleRemoveFile = (fileRef: string) => {
-    setAttachedFileRefs((current) =>
-      current.filter((currentFileRef) => currentFileRef !== fileRef),
+    setAttachedDocuments((current) =>
+      current.filter((currentDocument) => currentDocument.name !== fileRef),
     );
   };
 
@@ -172,6 +250,7 @@ export function ReportGuidedComposer(props: {
     await props.onStartPlanning({
       brief: normalizedBrief,
       fileRefs: normalizedAttachedFileRefs,
+      documents: normalizedAttachedDocuments,
     });
   };
 
@@ -240,7 +319,7 @@ export function ReportGuidedComposer(props: {
     event.preventDefault();
     dragDepthRef.current = 0;
     setIsDragOver(false);
-    attachFiles(Array.from(event.dataTransfer.files));
+    void attachFiles(Array.from(event.dataTransfer.files));
   };
 
   const openFilePicker = () => {
@@ -257,15 +336,23 @@ export function ReportGuidedComposer(props: {
                 User Guided Report Planning
               </CardTitle>
             </div>
-            <Button
-              className="h-11 px-5"
-              disabled={props.busy}
-              size="lg"
-              onClick={() => void handleStartPlanning()}
-            >
-              <SendHorizontalIcon className="size-4" />
-              {primaryActionLabel}
-            </Button>
+            <div className="flex items-center justify-end gap-3">
+              <ReportModelControl
+                disabled={props.busy}
+                modelSelection={props.modelSelection}
+                providerApiKeys={props.providerApiKeys}
+                onModelSelectionChange={props.onModelSelectionChange}
+              />
+              <Button
+                className="h-11 px-5"
+                disabled={props.busy}
+                size="lg"
+                onClick={() => void handleStartPlanning()}
+              >
+                <SendHorizontalIcon className="size-4" />
+                {primaryActionLabel}
+              </Button>
+            </div>
           </div>
         </CardHeader>
 
@@ -558,6 +645,88 @@ export function ReportGuidedComposer(props: {
                 </Button>
               </div>
             ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {props.busy && planning.status === "approved" ? (
+        <Card className="border-border/70">
+          <CardContent className="flex items-center gap-3 py-5 text-sm text-muted-foreground">
+            <LoaderCircleIcon className="size-4 animate-spin shrink-0" />
+            Generating report — this may take a minute…
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {!props.busy && props.report.latestRun?.finalArtifact ? (
+        <Card className="border-border/70">
+          <CardHeader className="pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <CardTitle>Generated Report</CardTitle>
+                <CardDescription>
+                  Report generated on{" "}
+                  {new Date(props.report.latestRun.updatedAt).toLocaleString()}
+                </CardDescription>
+              </div>
+              <div className="flex gap-2">
+                {isEditingArtifact ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setIsEditingArtifact(false);
+                        setArtifactDraft("");
+                      }}
+                    >
+                      <XIcon className="size-4" />
+                      Cancel
+                    </Button>
+                    <Button
+                      disabled={props.busy}
+                      size="sm"
+                      onClick={async () => {
+                        const ok = await props.onUpdateArtifact(artifactDraft);
+                        if (ok !== false) {
+                          setIsEditingArtifact(false);
+                          setArtifactDraft("");
+                        }
+                      }}
+                    >
+                      <SaveIcon className="size-4" />
+                      Save
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    disabled={props.busy}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setArtifactDraft(
+                        props.report.latestRun?.finalArtifact?.content ?? "",
+                      );
+                      setIsEditingArtifact(true);
+                    }}
+                  >
+                    <PencilIcon className="size-4" />
+                    Edit
+                  </Button>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {isEditingArtifact ? (
+              <Textarea
+                className="min-h-[32rem] font-mono text-xs"
+                value={artifactDraft}
+                onChange={(e) => setArtifactDraft(e.target.value)}
+              />
+            ) : (
+              <ReportMarkdown content={props.report.latestRun.finalArtifact.content} />
+            )}
           </CardContent>
         </Card>
       ) : null}

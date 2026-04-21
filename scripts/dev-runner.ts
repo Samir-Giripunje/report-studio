@@ -1,9 +1,9 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 import { homedir } from "node:os";
 
-import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as BunRuntime from "@effect/platform-bun/BunRuntime";
+import * as BunServices from "@effect/platform-bun/BunServices";
 import { NetService } from "@t3tools/shared/Net";
 import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
@@ -552,7 +552,7 @@ const devRunnerCli = Command.make("dev-runner", {
 
 const cliRuntimeLayer = Layer.mergeAll(
   Logger.layer([Logger.consolePretty()]),
-  NodeServices.layer,
+  BunServices.layer,
   NetService.layer,
 );
 
@@ -562,5 +562,5 @@ const runtimeProgram = Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
 );
 
 if (import.meta.main) {
-  NodeRuntime.runMain(runtimeProgram);
+  BunRuntime.runMain(runtimeProgram);
 }

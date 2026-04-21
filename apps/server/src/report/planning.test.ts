@@ -32,6 +32,7 @@ function makePlan(overrides?: Partial<ReportPlan>): ReportPlan {
       userDocuments: {
         enabled: true,
         fileRefs: [],
+        documents: [],
       },
       knowledgeBase: {
         enabled: false,
@@ -44,6 +45,9 @@ function makePlan(overrides?: Partial<ReportPlan>): ReportPlan {
       dataPresentation: "Use tables when helpful.",
       consistencyRules: ["Keep terminology consistent."],
       excludedTopics: [],
+    },
+    orchestration: {
+      modelSelection: null,
     },
     planning: {
       status: "idle",

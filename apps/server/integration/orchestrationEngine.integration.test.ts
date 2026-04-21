@@ -5,7 +5,6 @@ import {
   ApprovalRequestId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
-  DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   MessageId,
   ProjectId,
@@ -13,6 +12,11 @@ import {
   ThreadId,
   ModelSelection,
 } from "@t3tools/contracts";
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
+  codex: "gpt-4o",
+  claudeAgent: "claude-sonnet-4-5",
+};
 import { assert, it } from "@effect/vitest";
 import { Effect, Option, Schema } from "effect";
 

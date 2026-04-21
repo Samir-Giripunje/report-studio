@@ -1,4 +1,9 @@
-import { DEFAULT_MODEL_BY_PROVIDER, ModelSelection, ThreadId } from "@t3tools/contracts";
+import { type ModelSelection, ThreadId } from "@t3tools/contracts";
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
+  codex: "gpt-4o",
+  claudeAgent: "claude-sonnet-4-5",
+};
 import "../../index.css";
 
 import { page } from "vitest/browser";
@@ -9,7 +14,10 @@ import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { TraitsMenuContent } from "./TraitsPicker";
 import { useComposerDraftStore } from "../../composerDraftStore";
 
-async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: string }) {
+async function mountMenu(props?: {
+  modelSelection?: { provider: ModelSelection["provider"]; model: string };
+  prompt?: string;
+}) {
   const threadId = ThreadId.makeUnsafe("thread-compact-menu");
   const provider = props?.modelSelection?.provider ?? "claudeAgent";
   const draftsByThreadId = {} as ReturnType<
@@ -27,7 +35,6 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       [provider]: {
         provider,
         model,
-        ...(props?.modelSelection?.options ? { options: props.modelSelection.options } : {}),
       },
     },
     activeProvider: provider,
@@ -42,7 +49,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   const host = document.createElement("div");
   document.body.append(host);
   const onPromptChange = vi.fn();
-  const providerOptions = props?.modelSelection?.options;
+  const providerOptions = undefined;
   const models =
     provider === "claudeAgent"
       ? [
@@ -206,7 +213,6 @@ describe("CompactComposerControlsMenu", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-haiku-4-5",
-        options: { thinking: true },
       },
     });
 
@@ -225,7 +231,6 @@ describe("CompactComposerControlsMenu", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
-        options: { effort: "high" },
       },
       prompt: "Ultrathink:\nInvestigate this",
     });
@@ -244,7 +249,6 @@ describe("CompactComposerControlsMenu", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
-        options: { effort: "high" },
       },
       prompt: "Ultrathink:\nplease ultrathink about this problem",
     });

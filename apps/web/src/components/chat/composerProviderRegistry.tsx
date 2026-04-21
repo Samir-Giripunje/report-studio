@@ -1,17 +1,14 @@
-import {
-  type ProviderKind,
-  type ProviderModelOptions,
-  type ServerProviderModel,
-  type ThreadId,
-} from "@t3tools/contracts";
-import { isClaudeUltrathinkPrompt, resolveEffort } from "@t3tools/shared/model";
+import { type ProviderKind, type ServerProviderModel, type ThreadId } from "@t3tools/contracts";
+import { resolveEffort } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
-import {
-  normalizeClaudeModelOptionsWithCapabilities,
-  normalizeCodexModelOptionsWithCapabilities,
-} from "@t3tools/shared/model";
+
+type ProviderModelOptions = Record<string, Record<string, unknown> | undefined>;
+
+function isUltrathinkPrompt(prompt: string): boolean {
+  return /^ultrathink:/i.test(prompt.trimStart());
+}
 
 export type ComposerProviderStateInput = {
   provider: ProviderKind;
@@ -66,17 +63,13 @@ function getProviderStateFromCapabilities(
         : null
     : null;
 
-  const promptEffort = resolveEffort(caps, rawEffort) ?? null;
+  const promptEffort = resolveEffort(caps, rawEffort as string | null | undefined) ?? null;
 
-  // Normalize options for dispatch
-  const normalizedOptions =
-    provider === "codex"
-      ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions)
-      : normalizeClaudeModelOptionsWithCapabilities(caps, providerOptions);
+  // Pass options through for dispatch
+  const normalizedOptions = providerOptions ?? undefined;
 
   // Ultrathink styling (driven by capabilities data, not provider identity)
-  const ultrathinkActive =
-    caps.promptInjectedEffortLevels.length > 0 && isClaudeUltrathinkPrompt(prompt);
+  const ultrathinkActive = caps.promptInjectedEffortLevels.length > 0 && isUltrathinkPrompt(prompt);
 
   return {
     provider,

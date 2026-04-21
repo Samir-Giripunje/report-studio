@@ -117,6 +117,7 @@ export interface WsRpcClient {
     readonly respondToPlanning: RpcUnaryMethod<typeof REPORT_WS_METHODS.respondToPlanning>;
     readonly approve: RpcUnaryMethod<typeof REPORT_WS_METHODS.approve>;
     readonly startRun: RpcUnaryMethod<typeof REPORT_WS_METHODS.startRun>;
+    readonly updateArtifact: RpcUnaryMethod<typeof REPORT_WS_METHODS.updateArtifact>;
     readonly delete: RpcUnaryMethod<typeof REPORT_WS_METHODS.delete>;
   };
 }
@@ -272,6 +273,7 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
         transport.request((client) => client[REPORT_WS_METHODS.respondToPlanning](input)),
       approve: (input) => transport.request((client) => client[REPORT_WS_METHODS.approve](input)),
       startRun: (input) => transport.request((client) => client[REPORT_WS_METHODS.startRun](input)),
+      updateArtifact: (input) => transport.request((client) => client[REPORT_WS_METHODS.updateArtifact](input)),
       delete: (input) => transport.request((client) => client[REPORT_WS_METHODS.delete](input)),
     },
   };

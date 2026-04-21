@@ -148,6 +148,7 @@ export function buildInitialExecutionState(input: {
         message: `Initialized report orchestration for ${sectionRuns.length} sections.`,
         payload: {
           reportTitle: input.plan.metadata.title,
+          modelSelection: input.plan.orchestration.modelSelection,
           readySectionIds: sectionRuns
             .filter((section) => section.status === "ready")
             .map((section) => section.sectionId),

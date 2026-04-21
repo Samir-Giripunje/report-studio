@@ -56,6 +56,7 @@ import {
   ReportServiceError,
   ReportSnapshot,
   ReportStartRunInput,
+  ReportUpdateArtifactInput,
   ReportUpdateMetaInput,
   ReportUpdatePlanInput,
 } from "./report";
@@ -369,6 +370,12 @@ export const WsReportStartRunRpc = Rpc.make(REPORT_WS_METHODS.startRun, {
   error: ReportServiceError,
 });
 
+export const WsReportUpdateArtifactRpc = Rpc.make(REPORT_WS_METHODS.updateArtifact, {
+  payload: ReportUpdateArtifactInput,
+  success: ReportMutationResult,
+  error: ReportServiceError,
+});
+
 export const WsReportDeleteRpc = Rpc.make(REPORT_WS_METHODS.delete, {
   payload: ReportDeleteInput,
   success: ReportDeleteResult,
@@ -447,5 +454,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsReportRespondToPlanningRpc,
   WsReportApproveRpc,
   WsReportStartRunRpc,
+  WsReportUpdateArtifactRpc,
   WsReportDeleteRpc,
 );

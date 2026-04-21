@@ -8,6 +8,7 @@ import {
   ReportRespondToPlanningInput,
   ReportSnapshot,
   ReportStartRunInput,
+  ReportUpdateArtifactInput,
   ReportUpdateMetaInput,
   ReportUpdatePlanInput,
 } from "@t3tools/contracts";
@@ -38,6 +39,9 @@ export interface ReportServiceShape {
   ) => Effect.Effect<ReportMutationResult, ReportServiceError>;
   readonly startRun: (
     input: ReportStartRunInput,
+  ) => Effect.Effect<ReportMutationResult, ReportServiceError>;
+  readonly updateArtifact: (
+    input: ReportUpdateArtifactInput,
   ) => Effect.Effect<ReportMutationResult, ReportServiceError>;
   readonly delete: (
     input: ReportDeleteInput,

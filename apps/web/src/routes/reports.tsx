@@ -10,6 +10,8 @@ export function ReportsRouteView(props: {
   selectedReportId?: string | null;
   selectedFolder?: string | null;
 }) {
+  const selectedReportId = props.selectedReportId ?? null;
+
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
@@ -31,10 +33,10 @@ export function ReportsRouteView(props: {
           </div>
         )}
 
-        {props.selectedReportId === null && props.selectedFolder ? (
+        {selectedReportId === null && props.selectedFolder ? (
           <ReportFolderPage folder={props.selectedFolder} />
         ) : (
-          <ReportHarnessPage selectedReportId={props.selectedReportId ?? null} />
+          <ReportHarnessPage selectedReportId={selectedReportId} />
         )}
       </div>
     </SidebarInset>

@@ -10,12 +10,7 @@
  * store.
  */
 import { useCallback, useMemo } from "react";
-import {
-  ServerSettings,
-  ServerSettingsPatch,
-  ModelSelection,
-  ThreadEnvMode,
-} from "@t3tools/contracts";
+import { ServerSettings, ServerSettingsPatch, ThreadEnvMode } from "@t3tools/contracts";
 import {
   type ClientSettings,
   ClientSettingsSchema,
@@ -29,7 +24,6 @@ import {
 } from "@t3tools/contracts/settings";
 import { ensureNativeApi } from "~/nativeApi";
 import { useLocalStorage } from "./useLocalStorage";
-import { normalizeCustomModelSlugs } from "~/modelSelection";
 import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
@@ -143,48 +137,6 @@ export function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<s
 
   if (Schema.is(ThreadEnvMode)(legacySettings.defaultThreadEnvMode)) {
     patch.defaultThreadEnvMode = legacySettings.defaultThreadEnvMode;
-  }
-
-  if (Schema.is(ModelSelection)(legacySettings.textGenerationModelSelection)) {
-    patch.textGenerationModelSelection = legacySettings.textGenerationModelSelection;
-  }
-
-  if (typeof legacySettings.codexBinaryPath === "string") {
-    patch.providers ??= {};
-    patch.providers.codex ??= {};
-    patch.providers.codex.binaryPath = legacySettings.codexBinaryPath;
-  }
-
-  if (typeof legacySettings.codexHomePath === "string") {
-    patch.providers ??= {};
-    patch.providers.codex ??= {};
-    patch.providers.codex.homePath = legacySettings.codexHomePath;
-  }
-
-  if (Array.isArray(legacySettings.customCodexModels)) {
-    patch.providers ??= {};
-    patch.providers.codex ??= {};
-    patch.providers.codex.customModels = normalizeCustomModelSlugs(
-      legacySettings.customCodexModels,
-      new Set<string>(),
-      "codex",
-    );
-  }
-
-  if (Predicate.isString(legacySettings.claudeBinaryPath)) {
-    patch.providers ??= {};
-    patch.providers.claudeAgent ??= {};
-    patch.providers.claudeAgent.binaryPath = legacySettings.claudeBinaryPath;
-  }
-
-  if (Array.isArray(legacySettings.customClaudeModels)) {
-    patch.providers ??= {};
-    patch.providers.claudeAgent ??= {};
-    patch.providers.claudeAgent.customModels = normalizeCustomModelSlugs(
-      legacySettings.customClaudeModels,
-      new Set<string>(),
-      "claudeAgent",
-    );
   }
 
   return patch;

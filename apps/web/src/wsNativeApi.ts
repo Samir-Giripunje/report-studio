@@ -119,6 +119,7 @@ export function createWsNativeApi(): NativeApi {
       respondToPlanning: rpcClient.reports.respondToPlanning,
       approve: (reportId) => rpcClient.reports.approve({ reportId }),
       startRun: rpcClient.reports.startRun,
+      updateArtifact: rpcClient.reports.updateArtifact,
       delete: (reportId) => rpcClient.reports.delete({ reportId }),
     },
   };

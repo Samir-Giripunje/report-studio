@@ -535,10 +535,6 @@ describe("ProviderCommandReactor", () => {
         modelSelection: {
           provider: "codex",
           model: "gpt-5.3-codex",
-          options: {
-            reasoningEffort: "high",
-            fastMode: true,
-          },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -552,10 +548,6 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         provider: "codex",
         model: "gpt-5.3-codex",
-        options: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
       },
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
@@ -563,10 +555,6 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         provider: "codex",
         model: "gpt-5.3-codex",
-        options: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
       },
     });
   });
@@ -591,9 +579,6 @@ describe("ProviderCommandReactor", () => {
         modelSelection: {
           provider: "claudeAgent",
           model: "claude-sonnet-4-6",
-          options: {
-            effort: "max",
-          },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -607,9 +592,6 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-sonnet-4-6",
-        options: {
-          effort: "max",
-        },
       },
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
@@ -617,9 +599,6 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-sonnet-4-6",
-        options: {
-          effort: "max",
-        },
       },
     });
   });
@@ -644,9 +623,6 @@ describe("ProviderCommandReactor", () => {
         modelSelection: {
           provider: "claudeAgent",
           model: "claude-opus-4-6",
-          options: {
-            fastMode: true,
-          },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -660,9 +636,6 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
-        options: {
-          fastMode: true,
-        },
       },
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
@@ -670,9 +643,6 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
-        options: {
-          fastMode: true,
-        },
       },
     });
   });
@@ -886,9 +856,6 @@ describe("ProviderCommandReactor", () => {
         modelSelection: {
           provider: "claudeAgent",
           model: "claude-sonnet-4-6",
-          options: {
-            effort: "medium",
-          },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -913,9 +880,6 @@ describe("ProviderCommandReactor", () => {
         modelSelection: {
           provider: "claudeAgent",
           model: "claude-sonnet-4-6",
-          options: {
-            effort: "max",
-          },
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
@@ -930,9 +894,6 @@ describe("ProviderCommandReactor", () => {
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-sonnet-4-6",
-        options: {
-          effort: "max",
-        },
       },
     });
   });

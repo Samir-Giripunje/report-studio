@@ -4,10 +4,12 @@ import type {
   ReportPlanningOutline,
   ReportPlanningQuestion,
   ReportPlanningState,
-  ReportSectionNode,
+  ReportSourceDocument,
 } from "@t3tools/contracts";
 
 import { normalizeReportFileRefs } from "@t3tools/shared/report";
+
+type ReportPlanSection = ReportPlan["sectionTree"][number];
 
 function makePlanningMessage(input: {
   readonly role: ReportPlanningMessage["role"];
@@ -50,7 +52,7 @@ function makeSectionNode(input: {
   readonly maxWords: number;
   readonly dependsOn?: ReadonlyArray<string>;
   readonly generationOrder: number | "last";
-}): ReportSectionNode {
+}): ReportPlanSection {
   return {
     id: slugifySectionId(input.title) || `section-${crypto.randomUUID()}`,
     title: input.title,
@@ -194,7 +196,7 @@ function buildOutline(input: {
   readonly fileRefs: ReadonlyArray<string>;
 }): {
   readonly outline: ReportPlanningOutline;
-  readonly sectionTree: ReadonlyArray<ReportSectionNode>;
+  readonly sectionTree: ReadonlyArray<ReportPlanSection>;
 } {
   const kind = detectOutlineKind(input.brief, input.fileRefs);
   const sourceCount = input.fileRefs.length;
@@ -551,6 +553,7 @@ export function beginReportPlanning(input: {
   readonly plan: ReportPlan;
   readonly brief: string;
   readonly fileRefs: ReadonlyArray<string>;
+  readonly documents?: ReadonlyArray<ReportSourceDocument>;
   readonly createdAt: string;
 }): ReportPlan {
   const brief = input.brief.trim();
@@ -585,6 +588,9 @@ export function beginReportPlanning(input: {
         userDocuments: {
           ...input.plan.globalSourceConfig.userDocuments,
           fileRefs,
+          documents: input.documents
+            ? [...input.documents]
+            : input.plan.globalSourceConfig.userDocuments.documents,
         },
       },
       planning,
@@ -609,6 +615,9 @@ export function beginReportPlanning(input: {
       userDocuments: {
         ...input.plan.globalSourceConfig.userDocuments,
         fileRefs,
+        documents: input.documents
+          ? [...input.documents]
+          : input.plan.globalSourceConfig.userDocuments.documents,
       },
     },
     sectionTree: [...sectionTree],

@@ -17,156 +17,60 @@ const makeServerSettingsLayer = () =>
   );
 
 it.layer(NodeServices.layer)("server settings", (it) => {
-  it.effect("decodes nested settings patches", () =>
+  it.effect("decodes observability settings patches", () =>
     Effect.sync(() => {
       const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
-      assert.deepEqual(decodePatch({ providers: { codex: { binaryPath: "/tmp/codex" } } }), {
-        providers: { codex: { binaryPath: "/tmp/codex" } },
-      });
-
       assert.deepEqual(
         decodePatch({
-          textGenerationModelSelection: {
-            options: {
-              fastMode: false,
-            },
+          observability: {
+            otlpTracesUrl: "http://localhost:4318/v1/traces",
           },
         }),
         {
-          textGenerationModelSelection: {
-            options: {
-              fastMode: false,
-            },
+          observability: {
+            otlpTracesUrl: "http://localhost:4318/v1/traces",
           },
         },
       );
     }),
   );
 
-  it.effect("deep merges nested settings updates without dropping siblings", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
+  it.effect("decodes provider API key patches", () =>
+    Effect.sync(() => {
+      const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
-      yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "/usr/local/bin/codex",
-            homePath: "/Users/julius/.codex",
+      assert.deepEqual(
+        decodePatch({
+          providerApiKeys: {
+            openai: "sk-openai",
           },
-          claudeAgent: {
-            binaryPath: "/usr/local/bin/claude",
-            customModels: ["claude-custom"],
-          },
-        },
-        textGenerationModelSelection: {
-          provider: "codex",
-          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-          options: {
-            reasoningEffort: "high",
-            fastMode: true,
+        }),
+        {
+          providerApiKeys: {
+            openai: "sk-openai",
           },
         },
-      });
-
-      const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "/opt/homebrew/bin/codex",
-          },
-        },
-        textGenerationModelSelection: {
-          options: {
-            fastMode: false,
-          },
-        },
-      });
-
-      assert.deepEqual(next.providers.codex, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/codex",
-        homePath: "/Users/julius/.codex",
-        customModels: [],
-      });
-      assert.deepEqual(next.providers.claudeAgent, {
-        enabled: true,
-        binaryPath: "/usr/local/bin/claude",
-        customModels: ["claude-custom"],
-      });
-      assert.deepEqual(next.textGenerationModelSelection, {
-        provider: "codex",
-        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-        options: {
-          reasoningEffort: "high",
-          fastMode: false,
-        },
-      });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+      );
+    }),
   );
 
-  it.effect("preserves model when switching providers via textGenerationModelSelection", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
-
-      // Start with Claude text generation selection
-      yield* serverSettings.updateSettings({
-        textGenerationModelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            effort: "high",
-          },
-        },
-      });
-
-      // Switch to Codex — the stale Claude "effort" in options must not
-      // cause the update to lose the selected model.
-      const next = yield* serverSettings.updateSettings({
-        textGenerationModelSelection: {
-          provider: "codex",
-          model: "gpt-5.4",
-          options: {
-            reasoningEffort: "high",
-          },
-        },
-      });
-
-      assert.deepEqual(next.textGenerationModelSelection, {
-        provider: "codex",
-        model: "gpt-5.4",
-        options: {
-          reasoningEffort: "high",
-        },
-      });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("trims provider path settings when updates are applied", () =>
+  it.effect("trims provider API keys when updates are applied", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
 
       const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "  /opt/homebrew/bin/codex  ",
-            homePath: "   ",
-          },
-          claudeAgent: {
-            binaryPath: "  /opt/homebrew/bin/claude  ",
-          },
+        providerApiKeys: {
+          openai: "  sk-openai  ",
+          claude: "  sk-claude  ",
+          gemini: "  sk-gemini  ",
         },
       });
 
-      assert.deepEqual(next.providers.codex, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/codex",
-        homePath: "",
-        customModels: [],
-      });
-      assert.deepEqual(next.providers.claudeAgent, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/claude",
-        customModels: [],
+      assert.deepEqual(next.providerApiKeys, {
+        openai: "sk-openai",
+        claude: "sk-claude",
+        gemini: "sk-gemini",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -189,57 +93,87 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("defaults blank binary paths to provider executables", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
-
-      const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: "   ",
-          },
-          claudeAgent: {
-            binaryPath: "",
-          },
-        },
-      });
-
-      assert.equal(next.providers.codex.binaryPath, "codex");
-      assert.equal(next.providers.claudeAgent.binaryPath, "claude");
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
   it.effect("writes only non-default server settings to disk", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
       const serverConfig = yield* ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
-      const next = yield* serverSettings.updateSettings({
+
+      yield* serverSettings.updateSettings({
+        providerApiKeys: {
+          openai: "sk-openai",
+        },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         },
-        providers: {
-          codex: {
-            binaryPath: "/opt/homebrew/bin/codex",
-          },
-        },
       });
-
-      assert.equal(next.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       assert.deepEqual(JSON.parse(raw), {
+        providerApiKeys: {
+          openai: "sk-openai",
+        },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         },
-        providers: {
-          codex: {
-            binaryPath: "/opt/homebrew/bin/codex",
-          },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("deep merges nested observability updates without dropping siblings", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      yield* serverSettings.updateSettings({
+        observability: {
+          otlpTracesUrl: "http://localhost:4318/v1/traces",
         },
       });
+
+      const next = yield* serverSettings.updateSettings({
+        observability: {
+          otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        },
+      });
+
+      assert.deepEqual(next.observability, {
+        otlpTracesUrl: "http://localhost:4318/v1/traces",
+        otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("deep merges provider API key updates without dropping siblings", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+
+      yield* serverSettings.updateSettings({
+        providerApiKeys: {
+          openai: "sk-openai",
+        },
+      });
+
+      const next = yield* serverSettings.updateSettings({
+        providerApiKeys: {
+          gemini: "sk-gemini",
+        },
+      });
+
+      assert.deepEqual(next.providerApiKeys, {
+        openai: "sk-openai",
+        claude: "",
+        gemini: "sk-gemini",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("returns defaults on fresh settings", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const settings = yield* serverSettings.getSettings;
+      assert.deepEqual(settings, DEFAULT_SERVER_SETTINGS);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

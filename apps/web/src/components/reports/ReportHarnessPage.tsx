@@ -1,8 +1,10 @@
 import {
+  type ProviderKind,
   type ReportPlan,
   type ReportRecord,
   type ReportSectionNode,
   type ReportSectionRun,
+  type ReportSourceDocument,
 } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -10,6 +12,8 @@ import { PlayIcon, RefreshCcwIcon, SaveIcon, ShieldCheckIcon } from "lucide-reac
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useCreateReportDraft } from "~/hooks/useCreateReportDraft";
+import { useSettings } from "~/hooks/useSettings";
+import { upsertReportSnapshotRecord } from "~/lib/reportSnapshotCache";
 import { type ReportCreationMode } from "~/lib/reportCreation";
 import { readNativeApi } from "~/nativeApi";
 import { reportQueryKeys, reportSnapshotQueryOptions } from "~/lib/reportReactQuery";
@@ -19,6 +23,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui
 import { Textarea } from "../ui/textarea";
 import { NewReportDialog } from "./NewReportDialog";
 import { ReportGuidedComposer } from "./ReportGuidedComposer";
+import { getDefaultReportModelSelection, ReportModelControl, resolveReportModelSelection } from "./ReportModelControl";
 
 type ReportSectionLike = ReportSectionNode | ReportSectionRun;
 
@@ -92,6 +97,7 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const snapshotQuery = useQuery(reportSnapshotQueryOptions());
+  const { providerApiKeys } = useSettings();
   const [planDraft, setPlanDraft] = useState("");
   const [isNewReportDialogOpen, setIsNewReportDialogOpen] = useState(false);
   const [creatingReportMode, setCreatingReportMode] = useState<ReportCreationMode | null>(null);
@@ -175,6 +181,12 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
     setPlanDraft(JSON.stringify(selectedReport.plan, null, 2));
   }, [selectedReport]);
 
+  const fallbackModelSelection = getDefaultReportModelSelection(providerApiKeys);
+  const reportModelSelection = resolveReportModelSelection(
+    selectedReport?.plan.orchestration.modelSelection ?? fallbackModelSelection,
+    providerApiKeys,
+  );
+
   const runAction = useCallback(
     async (tag: string, work: () => Promise<void>) => {
       setBusyAction(tag);
@@ -183,10 +195,19 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
         await work();
         await refreshSnapshot();
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "The report action failed.");
+        console.error(`[runAction:${tag}] error:`, cause);
+        const message =
+          cause instanceof Error && cause.message.trim().length > 0
+            ? cause.message
+            : typeof (cause as any)?.message === "string" && (cause as any).message.trim().length > 0
+              ? (cause as any).message
+              : "The report action failed.";
+        setError(message);
+        return false;
       } finally {
         setBusyAction(null);
       }
+      return true;
     },
     [refreshSnapshot],
   );
@@ -201,6 +222,30 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
       setCreatingReportMode(null);
     },
     [createReportDraft],
+  );
+
+  const handleReportModelSelectionChange = useCallback(
+    async (provider: ProviderKind, model: string) => {
+      if (!api || !selectedReport) {
+        return;
+      }
+
+      setBusyAction("update-model-selection");
+      setError(null);
+      try {
+        const result = await api.reports.updateMeta({
+          reportId: selectedReport.id,
+          modelSelection: { provider, model },
+        });
+        upsertReportSnapshotRecord(queryClient, result.report);
+        await refreshSnapshot();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Failed to update the report model.");
+      } finally {
+        setBusyAction(null);
+      }
+    },
+    [api, queryClient, refreshSnapshot, selectedReport],
   );
 
   const handleSavePlan = async () => {
@@ -234,8 +279,20 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
     });
   };
 
+  const handleUpdateArtifact = useCallback(
+    async (content: string) => {
+      if (!api || !selectedReport) {
+        return;
+      }
+      return await runAction("update-artifact", async () => {
+        await api.reports.updateArtifact({ reportId: selectedReport.id, content });
+      });
+    },
+    [api, runAction, selectedReport],
+  );
+
   const handleBeginGuidedPlanning = useCallback(
-    async (input: { brief: string; fileRefs: string[] }) => {
+    async (input: { brief: string; fileRefs: string[]; documents: ReportSourceDocument[] }) => {
       if (!api || !selectedReport) {
         return;
       }
@@ -245,6 +302,7 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
           reportId: selectedReport.id,
           brief: input.brief,
           fileRefs: input.fileRefs,
+          documents: input.documents,
         });
       });
     },
@@ -288,11 +346,15 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
               {isUserGuidedReport(selectedReport) ? (
                 <ReportGuidedComposer
                   busy={busyAction !== null}
+                  modelSelection={reportModelSelection}
+                  providerApiKeys={providerApiKeys}
                   report={selectedReport}
                   onApprove={handleApprove}
+                  onModelSelectionChange={handleReportModelSelectionChange}
                   onRespond={handleRespondToGuidedPlanning}
                   onStartRun={handleStartRun}
                   onStartPlanning={handleBeginGuidedPlanning}
+                  onUpdateArtifact={handleUpdateArtifact}
                 />
               ) : (
                 <Card>
@@ -302,9 +364,17 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
                         <CardTitle>{selectedReport.title}</CardTitle>
                         <CardDescription>{selectedReport.plan.metadata.brief}</CardDescription>
                       </div>
-                      <Badge variant={statusBadgeVariant(selectedReport.status)}>
-                        {selectedReport.status}
-                      </Badge>
+                      <div className="flex flex-wrap items-start justify-end gap-3">
+                        <ReportModelControl
+                          disabled={busyAction !== null}
+                          modelSelection={reportModelSelection}
+                          providerApiKeys={providerApiKeys}
+                          onModelSelectionChange={handleReportModelSelectionChange}
+                        />
+                        <Badge variant={statusBadgeVariant(selectedReport.status)}>
+                          {selectedReport.status}
+                        </Badge>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="flex flex-wrap gap-2">
@@ -430,6 +500,24 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
                               <div className="mt-1 text-xs text-muted-foreground">{entry.at}</div>
                             </div>
                           ))}
+                        </CardContent>
+                      </Card>
+                    ) : null}
+
+                    {selectedReport.latestRun?.finalArtifact ? (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>Generated report</CardTitle>
+                          <CardDescription>
+                            Latest artifact generated by the report orchestration flow.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <Textarea
+                            className="min-h-[22rem] font-mono text-xs"
+                            readOnly
+                            value={selectedReport.latestRun.finalArtifact.content}
+                          />
                         </CardContent>
                       </Card>
                     ) : null}

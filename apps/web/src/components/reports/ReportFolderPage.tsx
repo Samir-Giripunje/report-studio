@@ -11,6 +11,7 @@ import {
   groupReportsForSidebar,
   sortReportsForSidebar,
 } from "~/lib/reportList";
+import { removeReportSnapshotRecord, upsertReportSnapshotRecord } from "~/lib/reportSnapshotCache";
 import { readNativeApi } from "~/nativeApi";
 import { reportQueryKeys, reportSnapshotQueryOptions } from "~/lib/reportReactQuery";
 import { Button } from "../ui/button";
@@ -106,11 +107,12 @@ export function ReportFolderPage(props: { folder: string }) {
       }
 
       try {
-        await api.reports.updateMeta({
+        const result = await api.reports.updateMeta({
           reportId,
           title: trimmedTitle,
         });
-        await queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+        upsertReportSnapshotRecord(queryClient, result.report);
+        void queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -132,15 +134,16 @@ export function ReportFolderPage(props: { folder: string }) {
       }
 
       try {
-        await api.reports.updateMeta({
+        const result = await api.reports.updateMeta({
           reportId: report.id,
           folder: nextFolder,
         });
-        await queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+        upsertReportSnapshotRecord(queryClient, result.report);
+        void queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
       } catch (error) {
         toastManager.add({
           type: "error",
-          title: "Failed to update project",
+          title: "Failed to update folder",
           description: toReportActionErrorMessage(error),
         });
       }
@@ -168,7 +171,8 @@ export function ReportFolderPage(props: { folder: string }) {
         }
 
         await api.reports.delete(report.id);
-        await queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+        removeReportSnapshotRecord(queryClient, report.id);
+        void queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -192,7 +196,7 @@ export function ReportFolderPage(props: { folder: string }) {
           { id: "rename", label: "Rename" },
           {
             id: "move",
-            label: "Move to project",
+            label: "Move to folder",
             disabled: destinationFolders.length === 0,
           },
           { id: "remove", label: `Remove from ${props.folder}` },
@@ -237,7 +241,7 @@ export function ReportFolderPage(props: { folder: string }) {
 
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-8 px-6 py-6 sm:px-8 sm:py-8">
+      <div className="mx-auto flex min-h-full max-w-6xl flex-col gap-12 px-6 py-6 sm:px-8 sm:py-8">
         <div className="flex items-center gap-3">
           <FolderIcon className="size-7 text-foreground/85" />
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">{props.folder}</h1>
@@ -252,7 +256,7 @@ export function ReportFolderPage(props: { folder: string }) {
           />
         </div>
 
-        <div className="space-y-2">
+        <div className="mx-auto w-[70%] space-y-2">
           {folderReports.map((report) => {
             const destinationFolders = existingFolderOptions.filter(
               (folder) => folder !== props.folder,
@@ -263,7 +267,7 @@ export function ReportFolderPage(props: { folder: string }) {
             return (
               <div
                 key={report.id}
-                className="group/report-row flex items-start gap-4 border-border/60 border-b py-4"
+                className="group/report-row flex items-start gap-3 rounded-md border-border/60 border-b px-3 py-2.5 transition-colors hover:bg-accent/50"
               >
                 <button
                   type="button"
@@ -285,7 +289,7 @@ export function ReportFolderPage(props: { folder: string }) {
                         }
                       }}
                       value={renamingReportTitle}
-                      className="w-full rounded-md border border-ring bg-transparent px-2 py-1 text-xl font-medium text-foreground outline-none"
+                      className="w-full rounded-md border border-ring bg-transparent px-2 py-0.5 text-sm font-medium text-foreground outline-none"
                       onChange={(event) => setRenamingReportTitle(event.target.value)}
                       onClick={(event) => event.stopPropagation()}
                       onKeyDown={(event) => {
@@ -303,7 +307,7 @@ export function ReportFolderPage(props: { folder: string }) {
                       }
                     />
                   ) : (
-                    <div className="truncate text-xl font-medium text-foreground">
+                    <div className="truncate text-sm font-medium text-foreground">
                       {report.title}
                     </div>
                   )}
@@ -325,9 +329,9 @@ export function ReportFolderPage(props: { folder: string }) {
                       >
                         <SelectTrigger
                           className="h-8 min-w-52 rounded-xl border-border bg-background text-sm"
-                          aria-label={`Move ${report.title} to another project`}
+                          aria-label={`Move ${report.title} to another folder`}
                         >
-                          <SelectValue placeholder="Select project" />
+                          <SelectValue placeholder="Select folder" />
                         </SelectTrigger>
                         <SelectPopup align="start" side="bottom" alignItemWithTrigger={false}>
                           {destinationFolders.map((folder) => (
@@ -342,7 +346,7 @@ export function ReportFolderPage(props: { folder: string }) {
                       </Button>
                     </div>
                   ) : (
-                    <div className="mt-1 line-clamp-1 text-lg text-muted-foreground">
+                    <div className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
                       {report.plan.metadata.brief}
                     </div>
                   )}
@@ -375,7 +379,7 @@ export function ReportFolderPage(props: { folder: string }) {
 
           {folderReports.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border/70 px-6 py-10 text-center text-muted-foreground">
-              No reports in this project yet.
+              No reports in this folder yet.
             </div>
           ) : null}
         </div>

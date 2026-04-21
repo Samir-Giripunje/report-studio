@@ -47,7 +47,6 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
   ProjectId,
   type ReportRecord,
@@ -145,9 +144,16 @@ import {
   sortReportsForSidebar,
 } from "../lib/reportList";
 import { reportQueryKeys, reportSnapshotQueryOptions } from "../lib/reportReactQuery";
+import { removeReportSnapshotRecord, upsertReportSnapshotRecord } from "../lib/reportSnapshotCache";
 import { parseReportsRouteSearch } from "../reportsRouteSearch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import type { Project } from "../types";
+
+const DEFAULT_MODEL_BY_PROVIDER = {
+  codex: "gpt-4o",
+  claudeAgent: "claude-sonnet-4-5",
+} as const;
+
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT = 4;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -1305,11 +1311,12 @@ export default function Sidebar() {
         return;
       }
       try {
-        await api.reports.updateMeta({
+        const result = await api.reports.updateMeta({
           reportId,
           title: trimmed,
         });
-        await queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+        upsertReportSnapshotRecord(queryClient, result.report);
+        void queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -1336,11 +1343,12 @@ export default function Sidebar() {
         return;
       }
       try {
-        await api.reports.updateMeta({
+        const result = await api.reports.updateMeta({
           reportId: report.id,
           folder: normalizedFolder,
         });
-        await queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
+        upsertReportSnapshotRecord(queryClient, result.report);
+        void queryClient.invalidateQueries({ queryKey: reportQueryKeys.all });
       } catch (error) {
         toastManager.add({
           type: "error",
@@ -1578,18 +1586,7 @@ export default function Sidebar() {
         return;
       }
 
-      queryClient.setQueryData(
-        reportQueryKeys.snapshot(),
-        (
-          current:
-            | {
-                readonly reports: ReadonlyArray<ReportRecord>;
-              }
-            | undefined,
-        ) => ({
-          reports: (current?.reports ?? []).filter((candidate) => candidate.id !== report.id),
-        }),
-      );
+      removeReportSnapshotRecord(queryClient, report.id);
 
       try {
         if (routeReportId === report.id) {
@@ -2892,12 +2889,28 @@ export default function Sidebar() {
                 <div>
                   <div className="mb-2 flex items-center justify-between pl-3 pr-1.5">
                     <span className="text-sm font-medium text-muted-foreground/80">Recent</span>
-                    <ReportSortMenu
-                      reportSortOrder={appSettings.sidebarReportSortOrder}
-                      onReportSortOrderChange={(sortOrder) => {
-                        updateSettings({ sidebarReportSortOrder: sortOrder });
-                      }}
-                    />
+                    <div className="flex items-center gap-0.5">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                              onClick={() => openCreateReportDialog()}
+                            />
+                          }
+                        >
+                          <PlusIcon className="size-3.5" />
+                        </TooltipTrigger>
+                        <TooltipPopup side="right">New Report</TooltipPopup>
+                      </Tooltip>
+                      <ReportSortMenu
+                        reportSortOrder={appSettings.sidebarReportSortOrder}
+                        onReportSortOrderChange={(sortOrder) => {
+                          updateSettings({ sidebarReportSortOrder: sortOrder });
+                        }}
+                      />
+                    </div>
                   </div>
 
                   <SidebarMenu>

@@ -2,6 +2,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ModelSelection,
+  type ProviderApiKeys,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import {
   Ref,
   Scope,
   ServiceMap,
+  Stream,
 } from "effect";
 
 import { ServerConfig } from "./config";
@@ -31,6 +33,38 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 
 const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
+
+// ── Provider API key → process.env sync ──────────────────────────────
+
+const PROVIDER_API_KEY_ENV_MAP = [
+  { provider: "openai", envVar: "OPENAI_API_KEY" },
+  { provider: "claude", envVar: "ANTHROPIC_API_KEY" },
+  { provider: "gemini", envVar: "GEMINI_API_KEY" },
+] as const satisfies ReadonlyArray<{
+  readonly provider: keyof ProviderApiKeys;
+  readonly envVar: string;
+}>;
+
+/**
+ * Tracks which env vars were injected from settings so we can clear them
+ * if the user later removes the key from the settings UI.
+ * Externally-set env vars (set before server start) are never cleared.
+ */
+const settingsManagedEnvKeys = new Set<string>();
+
+function applyProviderApiKeysToEnv(providerApiKeys: ProviderApiKeys): void {
+  for (const { provider, envVar } of PROVIDER_API_KEY_ENV_MAP) {
+    const value = providerApiKeys[provider];
+    if (value) {
+      process.env[envVar] = value;
+      settingsManagedEnvKeys.add(envVar);
+    } else if (settingsManagedEnvKeys.has(envVar)) {
+      // Only clear if settings previously set this key — never touch external values.
+      delete process.env[envVar];
+      settingsManagedEnvKeys.delete(envVar);
+    }
+  }
+}
 
 const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
@@ -297,6 +331,23 @@ const makeServerRuntimeStartup = Effect.gen(function* () {
           }),
         ),
         Effect.forkScoped,
+      ),
+    );
+
+    yield* Effect.logDebug("startup phase: syncing provider api keys to process env");
+    yield* runStartupPhase(
+      "settings.apikeyenv",
+      Effect.gen(function* () {
+        const initialSettings = yield* serverSettings.getSettings;
+        applyProviderApiKeysToEnv(initialSettings.providerApiKeys);
+        // Keep env vars in sync whenever settings change (e.g. user saves a key in the UI).
+        yield* Stream.runForEach(serverSettings.streamChanges, (next) =>
+          Effect.sync(() => applyProviderApiKeysToEnv(next.providerApiKeys)),
+        ).pipe(Effect.forkScoped);
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to sync provider api keys to process env", { cause: error }),
+        ),
       ),
     );
 

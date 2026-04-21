@@ -468,6 +468,21 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           ),
           { "rpc.aggregate": "reports" },
         ),
+      [REPORT_WS_METHODS.updateArtifact]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.updateArtifact,
+          reportService.updateArtifact(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to update report artifact.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
       [REPORT_WS_METHODS.delete]: (input) =>
         observeRpcEffect(
           REPORT_WS_METHODS.delete,

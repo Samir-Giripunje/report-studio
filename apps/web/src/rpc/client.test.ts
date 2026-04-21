@@ -127,20 +127,6 @@ describe("WsRpcAtomClient", () => {
       ...DEFAULT_SERVER_SETTINGS,
       enableAssistantStreaming: true,
       defaultThreadEnvMode: "worktree" as const,
-      textGenerationModelSelection: {
-        provider: "codex" as const,
-        model: "gpt-5.4",
-      },
-      providers: {
-        codex: {
-          ...DEFAULT_SERVER_SETTINGS.providers.codex,
-          homePath: "/tmp/codex-home",
-        },
-        claudeAgent: {
-          ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
-          enabled: false,
-        },
-      },
     };
     const requestPromise = runRpc((client) => client(WS_METHODS.serverGetSettings, {}));
 
@@ -177,20 +163,6 @@ describe("WsRpcAtomClient", () => {
       ...DEFAULT_SERVER_SETTINGS,
       enableAssistantStreaming: true,
       defaultThreadEnvMode: "worktree" as const,
-      textGenerationModelSelection: {
-        provider: "codex" as const,
-        model: "gpt-5.4",
-      },
-      providers: {
-        codex: {
-          ...DEFAULT_SERVER_SETTINGS.providers.codex,
-          homePath: "/tmp/codex-home",
-        },
-        claudeAgent: {
-          ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
-          enabled: false,
-        },
-      },
     };
     const registry = AtomRegistry.make();
     const query = WsRpcAtomClient.query(WS_METHODS.serverGetSettings, {});

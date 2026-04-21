@@ -1,10 +1,27 @@
 import * as Schema from "effect/Schema";
-import {
-  ProjectId,
-  ThreadId,
-  type ModelSelection,
-  type ProviderModelOptions,
-} from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
+
+type ClaudeCodeEffort = "low" | "medium" | "high" | "max" | "ultrathink";
+type ClaudeModelOptions = {
+  effort?: ClaudeCodeEffort;
+  thinking?: boolean;
+  fastMode?: boolean;
+  contextWindow?: string;
+};
+type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
+type CodexModelOptions = {
+  reasoningEffort?: CodexReasoningEffort;
+  fastMode?: boolean;
+};
+type ProviderModelOptions = {
+  codex?: CodexModelOptions;
+  claudeAgent?: ClaudeModelOptions;
+};
+type StoredModelSelection = {
+  provider: "codex" | "claudeAgent";
+  model: string;
+  options?: ProviderModelOptions["codex"] | ProviderModelOptions["claudeAgent"];
+};
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -82,13 +99,13 @@ function resetComposerDraftStore() {
 function modelSelection(
   provider: "codex" | "claudeAgent",
   model: string,
-  options?: ModelSelection["options"],
-): ModelSelection {
+  options?: StoredModelSelection["options"],
+): StoredModelSelection {
   return {
     provider,
     model,
     ...(options ? { options } : {}),
-  } as ModelSelection;
+  };
 }
 
 function providerModelOptions(options: ProviderModelOptions): ProviderModelOptions {

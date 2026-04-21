@@ -6,8 +6,10 @@ import {
   PositiveInt,
   ReportId,
   ReportRunId,
+  TrimmedString,
   TrimmedNonEmptyString,
 } from "./baseSchemas";
+import { ModelSelection } from "./orchestration";
 
 export const REPORT_WS_METHODS = {
   getSnapshot: "reports.getSnapshot",
@@ -18,6 +20,7 @@ export const REPORT_WS_METHODS = {
   respondToPlanning: "reports.respondToPlanning",
   approve: "reports.approve",
   startRun: "reports.startRun",
+  updateArtifact: "reports.updateArtifact",
   delete: "reports.delete",
 } as const;
 
@@ -81,9 +84,17 @@ export const ReportWebSearchSourceConfig = Schema.Struct({
 });
 export type ReportWebSearchSourceConfig = typeof ReportWebSearchSourceConfig.Type;
 
+export const ReportSourceDocument = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  mimeType: TrimmedNonEmptyString,
+  textContent: TrimmedString,
+});
+export type ReportSourceDocument = typeof ReportSourceDocument.Type;
+
 export const ReportUserDocumentsSourceConfig = Schema.Struct({
   enabled: Schema.Boolean,
   fileRefs: Schema.Array(TrimmedNonEmptyString),
+  documents: Schema.Array(ReportSourceDocument),
 });
 export type ReportUserDocumentsSourceConfig = typeof ReportUserDocumentsSourceConfig.Type;
 
@@ -218,6 +229,21 @@ export const ReportPlanningState = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(buildDefaultReportPlanningState));
 export type ReportPlanningState = typeof ReportPlanningState.Type;
 
+function buildDefaultReportOrchestrationConfig() {
+  return {
+    modelSelection: null,
+  };
+}
+
+const DEFAULT_REPORT_ORCHESTRATION_CONFIG = buildDefaultReportOrchestrationConfig();
+
+export const ReportOrchestrationConfig = Schema.Struct({
+  modelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_REPORT_ORCHESTRATION_CONFIG.modelSelection),
+  ),
+}).pipe(Schema.withDecodingDefault(buildDefaultReportOrchestrationConfig));
+export type ReportOrchestrationConfig = typeof ReportOrchestrationConfig.Type;
+
 export const ReportPlan = Schema.Struct({
   version: TrimmedNonEmptyString,
   status: ReportPlanStatus,
@@ -226,6 +252,7 @@ export const ReportPlan = Schema.Struct({
   documentProfiles: Schema.Array(ReportDocumentProfile),
   sectionTree: Schema.Array(ReportSectionNode),
   crossCuttingInstructions: ReportCrossCuttingInstructions,
+  orchestration: ReportOrchestrationConfig,
   planning: ReportPlanningState,
 });
 export type ReportPlan = typeof ReportPlan.Type;
@@ -302,6 +329,7 @@ export const ReportBeginPlanningInput = Schema.Struct({
   reportId: ReportId,
   brief: TrimmedNonEmptyString,
   fileRefs: Schema.Array(TrimmedNonEmptyString),
+  documents: Schema.Array(ReportSourceDocument),
 });
 export type ReportBeginPlanningInput = typeof ReportBeginPlanningInput.Type;
 
@@ -315,6 +343,7 @@ export const ReportUpdateMetaInput = Schema.Struct({
   reportId: ReportId,
   title: Schema.optionalKey(TrimmedNonEmptyString),
   folder: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
 });
 export type ReportUpdateMetaInput = typeof ReportUpdateMetaInput.Type;
 
@@ -327,6 +356,12 @@ export const ReportStartRunInput = Schema.Struct({
   reportId: ReportId,
 });
 export type ReportStartRunInput = typeof ReportStartRunInput.Type;
+
+export const ReportUpdateArtifactInput = Schema.Struct({
+  reportId: ReportId,
+  content: Schema.String,
+});
+export type ReportUpdateArtifactInput = typeof ReportUpdateArtifactInput.Type;
 
 export const ReportMutationResult = Schema.Struct({
   report: ReportRecord,

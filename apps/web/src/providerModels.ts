@@ -1,10 +1,14 @@
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
   type ModelCapabilities,
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
+  codex: "gpt-4o",
+  claudeAgent: "claude-sonnet-4-5",
+};
 import { normalizeModelSlug } from "@t3tools/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = {

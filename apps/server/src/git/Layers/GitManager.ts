@@ -32,7 +32,6 @@ import { GitHubCli, type GitHubPullRequestSummary } from "../Services/GitHubCli.
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScriptRunner.ts";
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
@@ -558,8 +557,6 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const gitHubCli = yield* GitHubCli;
   const textGeneration = yield* TextGeneration;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
-  const serverSettingsService = yield* ServerSettingsService;
-
   const createProgressEmitter = (
     input: { cwd: string; action: GitStackedAction },
     options?: GitRunStackedActionOptions,
@@ -1658,12 +1655,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const modelSelection = yield* serverSettingsService.getSettings.pipe(
-          Effect.map((settings) => settings.textGenerationModelSelection),
-          Effect.mapError((cause) =>
-            gitManagerError("runStackedAction", "Failed to get server settings.", cause),
-          ),
-        );
+        // Text generation model selection — will be replaced when an API provider is wired.
+        const modelSelection: ModelSelection = { provider: "codex", model: "gpt-4o" };
 
         if (input.featureBranch) {
           yield* Ref.set(currentPhase, Option.some("branch"));

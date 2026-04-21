@@ -1,4 +1,9 @@
-import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
+import { type ServerProvider } from "@t3tools/contracts";
+
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  codex: "Codex",
+  claudeAgent: "Claude",
+};
 import { memo } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { CircleAlertIcon } from "lucide-react";

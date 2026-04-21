@@ -1,4 +1,4 @@
-import type { ReportPlan, ReportRecord } from "@t3tools/contracts";
+import type { ReportPlan, ReportRecord, ReportSourceDocument } from "@t3tools/contracts";
 import { normalizeReportFileRefs } from "@t3tools/shared/report";
 
 export function buildGuidedReportPlan(
@@ -6,6 +6,7 @@ export function buildGuidedReportPlan(
   input: {
     brief: string;
     fileRefs: ReadonlyArray<string>;
+    documents?: ReadonlyArray<ReportSourceDocument>;
   },
 ): ReportPlan {
   return {
@@ -19,6 +20,9 @@ export function buildGuidedReportPlan(
       userDocuments: {
         ...report.plan.globalSourceConfig.userDocuments,
         fileRefs: normalizeReportFileRefs(input.fileRefs),
+        documents: input.documents
+          ? [...input.documents]
+          : report.plan.globalSourceConfig.userDocuments.documents,
       },
     },
   };

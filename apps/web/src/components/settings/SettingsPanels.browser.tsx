@@ -88,4 +88,43 @@ describe("GeneralSettingsPanel observability", () => {
 
     expect(openInEditor).toHaveBeenCalledWith("/repo/project/.t3/logs", "cursor");
   });
+
+  it("renders API Keys between General and Advanced and saves provider keys", async () => {
+    const updateSettings = vi.fn<NativeApi["server"]["updateSettings"]>().mockResolvedValue({
+      ...DEFAULT_SERVER_SETTINGS,
+      providerApiKeys: {
+        ...DEFAULT_SERVER_SETTINGS.providerApiKeys,
+        openai: "sk-openai",
+      },
+    });
+
+    window.nativeApi = {
+      server: {
+        updateSettings,
+      },
+    } as unknown as NativeApi;
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText.indexOf("General")).toBeGreaterThanOrEqual(0);
+    expect(bodyText.indexOf("API Keys")).toBeGreaterThan(bodyText.indexOf("General"));
+    expect(bodyText.indexOf("Advanced")).toBeGreaterThan(bodyText.indexOf("API Keys"));
+
+    await page.getByLabelText("OpenAI API key").fill("sk-openai");
+    await page.getByText("Add OpenAI key").click();
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      providerApiKeys: {
+        ...DEFAULT_SERVER_SETTINGS.providerApiKeys,
+        openai: "sk-openai",
+      },
+    });
+  });
 });

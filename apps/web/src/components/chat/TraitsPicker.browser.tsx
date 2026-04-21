@@ -2,14 +2,27 @@ import "../../index.css";
 
 import {
   type ModelSelection,
-  ClaudeModelOptions,
-  CodexModelOptions,
-  DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+
+type ClaudeModelOptions = {
+  effort?: string;
+  thinking?: boolean;
+  fastMode?: boolean;
+  contextWindow?: string;
+};
+type CodexModelOptions = {
+  reasoningEffort?: string;
+  fastMode?: boolean;
+};
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
+  codex: "gpt-4o",
+  claudeAgent: "claude-sonnet-4-5",
+};
 import { page } from "vitest/browser";
 import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -179,10 +192,10 @@ async function mountClaudePicker(props?: {
         ? {}
         : {
             claudeAgent: {
-              provider: "claudeAgent",
+              provider: "claudeAgent" as const,
               model,
               ...(claudeOptions && Object.keys(claudeOptions).length > 0
-                ? { options: claudeOptions }
+                ? { options: claudeOptions as ClaudeModelOptions }
                 : {}),
             },
           },
@@ -201,9 +214,8 @@ async function mountClaudePicker(props?: {
   const fallbackModelSelection =
     props?.fallbackModelOptions !== undefined
       ? ({
-          provider: "claudeAgent",
+          provider: "claudeAgent" as const,
           model,
-          ...(props.fallbackModelOptions ? { options: props.fallbackModelOptions } : {}),
         } satisfies ModelSelection)
       : null;
   const screen = await render(
@@ -371,7 +383,7 @@ describe("TraitsPicker (Claude)", () => {
 async function mountCodexPicker(props: { model?: string; options?: CodexModelOptions }) {
   const threadId = ThreadId.makeUnsafe("thread-codex-traits");
   const model = props.model ?? DEFAULT_MODEL_BY_PROVIDER.codex;
-  const draftsByThreadId: Record<ThreadId, ComposerThreadDraftState> = {
+  const draftsByThreadId = {
     [threadId]: {
       prompt: "",
       images: [],
@@ -380,16 +392,16 @@ async function mountCodexPicker(props: { model?: string; options?: CodexModelOpt
       terminalContexts: [],
       modelSelectionByProvider: {
         codex: {
-          provider: "codex",
+          provider: "codex" as const,
           model,
           ...(props.options ? { options: props.options } : {}),
         },
       },
-      activeProvider: "codex",
+      activeProvider: "codex" as const,
       runtimeMode: null,
       interactionMode: null,
     },
-  };
+  } as Record<ThreadId, ComposerThreadDraftState>;
 
   useComposerDraftStore.setState({
     draftsByThreadId,

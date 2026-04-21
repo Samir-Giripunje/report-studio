@@ -58,6 +58,7 @@ import type {
   ReportRespondToPlanningInput,
   ReportSnapshot,
   ReportStartRunInput,
+  ReportUpdateArtifactInput,
   ReportUpdateMetaInput,
   ReportUpdatePlanInput,
 } from "./report";
@@ -217,6 +218,7 @@ export interface NativeApi {
     respondToPlanning: (input: ReportRespondToPlanningInput) => Promise<ReportMutationResult>;
     approve: (reportId: ReportApproveInput["reportId"]) => Promise<ReportMutationResult>;
     startRun: (input: ReportStartRunInput) => Promise<ReportMutationResult>;
+    updateArtifact: (input: ReportUpdateArtifactInput) => Promise<ReportMutationResult>;
     delete: (reportId: ReportApproveInput["reportId"]) => Promise<ReportDeleteResult>;
   };
 }

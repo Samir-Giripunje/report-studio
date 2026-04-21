@@ -1,9 +1,8 @@
 /**
  * ProviderAdapterRegistryLive - In-memory provider adapter lookup layer.
  *
- * Binds provider kinds (codex/claudeAgent/...) to concrete adapter services.
- * This layer only performs adapter lookup; it does not route session-scoped
- * calls or own provider lifecycle workflows.
+ * Binds provider kinds to concrete adapter services.
+ * Currently empty — add API-based provider adapters here.
  *
  * @module ProviderAdapterRegistryLive
  */
@@ -15,20 +14,15 @@ import {
   ProviderAdapterRegistry,
   type ProviderAdapterRegistryShape,
 } from "../Services/ProviderAdapterRegistry.ts";
-import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
-import { CodexAdapter } from "../Services/CodexAdapter.ts";
 
 export interface ProviderAdapterRegistryLiveOptions {
   readonly adapters?: ReadonlyArray<ProviderAdapterShape<ProviderAdapterError>>;
 }
 
-const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(function* (
+function makeProviderAdapterRegistry(
   options?: ProviderAdapterRegistryLiveOptions,
-) {
-  const adapters =
-    options?.adapters !== undefined
-      ? options.adapters
-      : [yield* CodexAdapter, yield* ClaudeAdapter];
+): ProviderAdapterRegistryShape {
+  const adapters = options?.adapters ?? [];
   const byProvider = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
 
   const getByProvider: ProviderAdapterRegistryShape["getByProvider"] = (provider) => {
@@ -42,13 +36,9 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
   const listProviders: ProviderAdapterRegistryShape["listProviders"] = () =>
     Effect.sync(() => Array.from(byProvider.keys()));
 
-  return {
-    getByProvider,
-    listProviders,
-  } satisfies ProviderAdapterRegistryShape;
-});
+  return { getByProvider, listProviders };
+}
 
-export const ProviderAdapterRegistryLive = Layer.effect(
-  ProviderAdapterRegistry,
+export const ProviderAdapterRegistryLive = Layer.sync(ProviderAdapterRegistry, () =>
   makeProviderAdapterRegistry(),
 );

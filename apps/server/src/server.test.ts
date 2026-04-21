@@ -349,6 +349,7 @@ const buildAppUnderTest = (options?: {
             userDocuments: {
               enabled: false,
               fileRefs: [],
+              documents: [],
             },
             knowledgeBase: {
               enabled: false,
@@ -361,6 +362,9 @@ const buildAppUnderTest = (options?: {
             dataPresentation: "",
             consistencyRules: [],
             excludedTopics: [],
+          },
+          orchestration: {
+            modelSelection: null,
           },
           planning: {
             status: "idle",

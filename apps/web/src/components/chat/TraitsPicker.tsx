@@ -1,20 +1,34 @@
+import { type ProviderKind, type ServerProviderModel, type ThreadId } from "@t3tools/contracts";
 import {
-  type ClaudeModelOptions,
-  type CodexModelOptions,
-  type ProviderKind,
-  type ProviderModelOptions,
-  type ServerProviderModel,
-  type ThreadId,
-} from "@t3tools/contracts";
-import {
-  applyClaudePromptEffortPrefix,
-  isClaudeUltrathinkPrompt,
   trimOrNull,
   getDefaultEffort,
   getDefaultContextWindow,
   hasContextWindowOption,
   resolveEffort,
 } from "@t3tools/shared/model";
+
+type ClaudeModelOptions = {
+  effort?: string;
+  thinking?: boolean;
+  fastMode?: boolean;
+  contextWindow?: string;
+};
+type CodexModelOptions = {
+  reasoningEffort?: string;
+  fastMode?: boolean;
+};
+type ProviderModelOptions = {
+  codex?: CodexModelOptions;
+  claudeAgent?: ClaudeModelOptions;
+};
+
+function isUltrathinkPrompt(prompt: string): boolean {
+  return /^ultrathink:/i.test(prompt.trimStart());
+}
+
+function applyUltrathinkPrefix(text: string): string {
+  return `Ultrathink:\n${text}`;
+}
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";
@@ -118,11 +132,11 @@ function getSelectedTraits(
   const ultrathinkPromptControlled =
     allowPromptInjectedEffort &&
     caps.promptInjectedEffortLevels.length > 0 &&
-    isClaudeUltrathinkPrompt(prompt);
+    isUltrathinkPrompt(prompt);
 
   // Check if "ultrathink" appears in the body text (not just our prefix)
   const ultrathinkInBodyText =
-    ultrathinkPromptControlled && isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, ""));
+    ultrathinkPromptControlled && isUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, ""));
 
   return {
     caps,
@@ -192,9 +206,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
       if (!nextOption) return;
       if (caps.promptInjectedEffortLevels.includes(nextOption.value)) {
         const nextPrompt =
-          prompt.trim().length === 0
-            ? ULTRATHINK_PROMPT_PREFIX
-            : applyClaudePromptEffortPrefix(prompt, "ultrathink");
+          prompt.trim().length === 0 ? ULTRATHINK_PROMPT_PREFIX : applyUltrathinkPrefix(prompt);
         onPromptChange(nextPrompt);
         return;
       }

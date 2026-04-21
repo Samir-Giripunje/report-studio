@@ -5,6 +5,7 @@ import {
   ReportId,
   ReportPlan,
   ReportMutationResult,
+  type ReportSourceDocument,
   ReportServiceError,
   type ReportSnapshot,
   type ReportRecord,
@@ -15,14 +16,20 @@ import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
-import { buildInitialExecutionState, ReportPlanGraphError } from "../planGraph.ts";
+import { ReportPlanGraphError } from "../planGraph.ts";
 import {
   approveReportPlanning,
   beginReportPlanning,
   respondToReportPlanning,
 } from "../planning.ts";
+import {
+  applyPlanningDecision,
+  generateReportExecution,
+  maybePlanReportWithAgent,
+} from "../agent.ts";
 import { ReportService, type ReportServiceShape } from "../Services/ReportService.ts";
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const ReportRecordDbRow = ReportRecordSchema.mapFields(
   Struct.assign({
@@ -41,6 +48,18 @@ function toReportServiceError(message: string, cause?: unknown): ReportServiceEr
     message,
     ...(cause !== undefined ? { cause } : {}),
   });
+}
+
+function normalizeDocuments(
+  documents: ReadonlyArray<ReportSourceDocument>,
+): ReadonlyArray<ReportSourceDocument> {
+  return documents
+    .map((document) => ({
+      name: document.name.trim(),
+      mimeType: document.mimeType.trim(),
+      textContent: document.textContent.trim(),
+    }))
+    .filter((document) => document.name.length > 0 && document.mimeType.length > 0);
 }
 
 function buildDefaultPlan(input: ReportCreateDraftInput): ReportPlan {
@@ -71,6 +90,7 @@ function buildDefaultPlan(input: ReportCreateDraftInput): ReportPlan {
       userDocuments: {
         enabled: true,
         fileRefs: [],
+        documents: [],
       },
       knowledgeBase: {
         enabled: false,
@@ -136,6 +156,12 @@ function buildDefaultPlan(input: ReportCreateDraftInput): ReportPlan {
       consistencyRules: ["Keep terminology consistent across all sections."],
       excludedTopics: [],
     },
+    orchestration: {
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+    },
     planning: {
       status: "idle",
       pendingQuestions: [],
@@ -148,6 +174,7 @@ function buildDefaultPlan(input: ReportCreateDraftInput): ReportPlan {
 
 const makeReportService = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const serverSettings = yield* ServerSettingsService;
 
   const listReportRows = SqlSchema.findAll({
     Request: Schema.Void,
@@ -258,6 +285,14 @@ const makeReportService = Effect.gen(function* () {
       Effect.as({ report } satisfies ReportMutationResult),
     );
 
+  const getProviderApiKeys = () =>
+    serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.providerApiKeys),
+      Effect.mapError((cause) =>
+        toReportServiceError("Failed to load server settings for report orchestration.", cause),
+      ),
+    );
+
   const deleteReportRow = SqlSchema.void({
     Request: Schema.Struct({ reportId: ReportId }),
     execute: ({ reportId }) =>
@@ -297,6 +332,10 @@ const makeReportService = Effect.gen(function* () {
       const existing = yield* loadReport(input.reportId);
       const title = input.title ?? existing.title;
       const folder = input.folder !== undefined ? input.folder : existing.folder;
+      const modelSelection =
+        input.modelSelection !== undefined
+          ? input.modelSelection
+          : existing.plan.orchestration.modelSelection;
       const report: ReportRecord = {
         ...existing,
         title,
@@ -306,6 +345,10 @@ const makeReportService = Effect.gen(function* () {
           metadata: {
             ...existing.plan.metadata,
             title,
+          },
+          orchestration: {
+            ...existing.plan.orchestration,
+            modelSelection,
           },
         },
         updatedAt: nowIso(),
@@ -363,13 +406,37 @@ const makeReportService = Effect.gen(function* () {
       }
 
       const createdAt = nowIso();
+      const documents = normalizeDocuments(input.documents);
+      const providerApiKeys = yield* getProviderApiKeys();
+      const modelDecision = yield* Effect.promise(() =>
+        maybePlanReportWithAgent({
+          apiKeys: providerApiKeys,
+          plan: existing.plan,
+          brief: input.brief,
+          fileRefs: input.fileRefs,
+          documents,
+          priorConversation: [],
+        }),
+      );
 
-      const plan = beginReportPlanning({
-        plan: existing.plan,
-        brief: input.brief,
-        fileRefs: input.fileRefs,
-        createdAt,
-      });
+      const plan =
+        modelDecision !== null
+          ? applyPlanningDecision({
+              plan: existing.plan,
+              brief: input.brief,
+              fileRefs: input.fileRefs,
+              documents,
+              createdAt,
+              decision: modelDecision,
+              response: null,
+            })
+          : beginReportPlanning({
+              plan: existing.plan,
+              brief: input.brief,
+              fileRefs: input.fileRefs,
+              documents,
+              createdAt,
+            });
 
       const report: ReportRecord = {
         ...existing,
@@ -407,12 +474,40 @@ const makeReportService = Effect.gen(function* () {
       }
 
       const createdAt = nowIso();
+      const providerApiKeys = yield* getProviderApiKeys();
+      const currentBrief = existing.plan.metadata.brief;
+      const currentDocuments = normalizeDocuments(
+        existing.plan.globalSourceConfig.userDocuments.documents,
+      );
+      const currentFileRefs = existing.plan.globalSourceConfig.userDocuments.fileRefs;
+      const nextBrief = `${currentBrief.trim()}\n\nUser clarification:\n${input.response.trim()}`;
+      const modelDecision = yield* Effect.promise(() =>
+        maybePlanReportWithAgent({
+          apiKeys: providerApiKeys,
+          plan: existing.plan,
+          brief: nextBrief,
+          fileRefs: currentFileRefs,
+          documents: currentDocuments,
+          priorConversation: existing.plan.planning.conversation,
+        }),
+      );
 
-      const plan = respondToReportPlanning({
-        plan: existing.plan,
-        response: input.response,
-        createdAt,
-      });
+      const plan =
+        modelDecision !== null
+          ? applyPlanningDecision({
+              plan: existing.plan,
+              brief: currentBrief,
+              fileRefs: currentFileRefs,
+              documents: currentDocuments,
+              createdAt,
+              decision: modelDecision,
+              response: input.response,
+            })
+          : respondToReportPlanning({
+              plan: existing.plan,
+              response: input.response,
+              createdAt,
+            });
 
       const report: ReportRecord = {
         ...existing,
@@ -485,9 +580,11 @@ const makeReportService = Effect.gen(function* () {
       }
 
       const startedAt = nowIso();
-      const latestRun = yield* Effect.try({
+      const providerApiKeys = yield* getProviderApiKeys();
+      const runResult = yield* Effect.tryPromise({
         try: () =>
-          buildInitialExecutionState({
+          generateReportExecution({
+            apiKeys: providerApiKeys,
             runId: `report-run:${crypto.randomUUID()}` as ReportExecutionState["runId"],
             plan: existing.plan,
             startedAt,
@@ -496,16 +593,16 @@ const makeReportService = Effect.gen(function* () {
           toReportServiceError(
             error instanceof ReportPlanGraphError
               ? error.message
-              : `Failed to prepare report orchestration for '${input.reportId}'.`,
+              : `Failed to execute report orchestration for '${input.reportId}'.`,
             error,
           ),
       });
 
       const report: ReportRecord = {
         ...existing,
-        status: "running",
-        latestRun,
-        updatedAt: startedAt,
+        status: runResult.reportStatus,
+        latestRun: runResult.latestRun,
+        updatedAt: runResult.latestRun.updatedAt,
       };
       return yield* saveReport(report);
     }).pipe(
@@ -513,6 +610,37 @@ const makeReportService = Effect.gen(function* () {
         Schema.is(ReportServiceError)(cause)
           ? cause
           : toReportServiceError(`Failed to start report run '${input.reportId}'.`, cause),
+      ),
+    );
+
+  const updateArtifact: ReportServiceShape["updateArtifact"] = (input) =>
+    Effect.gen(function* () {
+      const existing = yield* loadReport(input.reportId);
+      if (!existing.latestRun) {
+        return yield* toReportServiceError(
+          `Report '${input.reportId}' has no run to update the artifact for.`,
+        );
+      }
+
+      const updatedAt = nowIso();
+      const report: ReportRecord = {
+        ...existing,
+        latestRun: {
+          ...existing.latestRun,
+          finalArtifact: {
+            format: existing.latestRun.finalArtifact?.format ?? "markdown",
+            content: input.content,
+          },
+          updatedAt,
+        },
+        updatedAt,
+      };
+      return yield* saveReport(report);
+    }).pipe(
+      Effect.mapError((cause) =>
+        Schema.is(ReportServiceError)(cause)
+          ? cause
+          : toReportServiceError(`Failed to update artifact for report '${input.reportId}'.`, cause),
       ),
     );
 
@@ -547,6 +675,7 @@ const makeReportService = Effect.gen(function* () {
     respondToPlanning,
     approve,
     startRun,
+    updateArtifact,
     delete: deleteReport,
   } satisfies ReportServiceShape;
 });
