@@ -5,11 +5,6 @@ import * as Socket from "effect/unstable/socket/Socket";
 
 import { resolveServerUrl } from "../lib/utils";
 import {
-  acknowledgeRpcRequest,
-  clearAllTrackedRpcRequests,
-  trackRpcRequestSent,
-} from "./requestLatencyState";
-import {
   getWsReconnectDelayMsForRetry,
   recordWsConnectionAttempt,
   recordWsConnectionClosed,
@@ -46,7 +41,6 @@ export function createWsRpcProtocolLayer(url?: string) {
       socket.addEventListener(
         "error",
         () => {
-          clearAllTrackedRpcRequests();
           recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
         },
         { once: true },
@@ -54,7 +48,6 @@ export function createWsRpcProtocolLayer(url?: string) {
       socket.addEventListener(
         "close",
         (event) => {
-          clearAllTrackedRpcRequests();
           recordWsConnectionClosed({
             code: event.code,
             reason: event.reason,
@@ -74,30 +67,10 @@ export function createWsRpcProtocolLayer(url?: string) {
   );
   const protocolLayer = Layer.effect(
     RpcClient.Protocol,
-    Effect.map(
-      RpcClient.makeProtocolSocket({
-        retryPolicy,
-        retryTransientErrors: true,
-      }),
-      (protocol) => ({
-        ...protocol,
-        run: (writeResponse) =>
-          protocol.run((response) => {
-            if (response._tag === "Chunk" || response._tag === "Exit") {
-              acknowledgeRpcRequest(response.requestId);
-            } else if (response._tag === "ClientProtocolError" || response._tag === "Defect") {
-              clearAllTrackedRpcRequests();
-            }
-            return writeResponse(response);
-          }),
-        send: (request, transferables) => {
-          if (request._tag === "Request") {
-            trackRpcRequestSent(request.id, request.tag);
-          }
-          return protocol.send(request, transferables);
-        },
-      }),
-    ),
+    RpcClient.makeProtocolSocket({
+      retryPolicy,
+      retryTransientErrors: true,
+    }),
   );
 
   return protocolLayer.pipe(Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)));

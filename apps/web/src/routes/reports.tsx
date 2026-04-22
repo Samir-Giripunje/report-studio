@@ -1,10 +1,10 @@
-import { createFileRoute, useSearch } from "@tanstack/react-router";
+import { createFileRoute, useParams, useSearch } from "@tanstack/react-router";
 
 import { ReportFolderPage } from "../components/reports/ReportFolderPage";
 import { ReportHarnessPage } from "../components/reports/ReportHarnessPage";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { isElectron } from "../env";
-import { parseReportsRouteSearch } from "../reportsRouteSearch";
+import { parseReportsRouteSearch, resolveReportsRouteSelection } from "../reportsRouteSearch";
 
 export function ReportsRouteView(props: {
   selectedReportId?: string | null;
@@ -43,15 +43,22 @@ export function ReportsRouteView(props: {
   );
 }
 
-function ReportsIndexRouteView() {
+function ReportsRouteComponent() {
   const search = useSearch({
     strict: false,
     select: (nextSearch) => parseReportsRouteSearch(nextSearch),
   });
+  const params = useParams({ strict: false });
+  const selection = resolveReportsRouteSelection({ params, search });
 
-  return <ReportsRouteView selectedFolder={search.folder} />;
+  return (
+    <ReportsRouteView
+      selectedFolder={selection.selectedFolder}
+      selectedReportId={selection.selectedReportId}
+    />
+  );
 }
 
 export const Route = createFileRoute("/reports")({
-  component: ReportsIndexRouteView,
+  component: ReportsRouteComponent,
 });

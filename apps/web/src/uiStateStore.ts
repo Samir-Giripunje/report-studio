@@ -19,11 +19,15 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
+  reportFolderLatestUpdatedAtByLabel?: Record<string, string>;
+  reportFolderOrderLabels?: string[];
 }
 
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: ProjectId[];
+  reportFolderLatestUpdatedAtByLabel: Record<string, string>;
+  reportFolderOrder: string[];
 }
 
 export interface UiThreadState {
@@ -37,6 +41,11 @@ export interface SyncProjectInput {
   cwd: string;
 }
 
+export interface SyncReportFolderInput {
+  label: string;
+  latestUpdatedAt: string;
+}
+
 export interface SyncThreadInput {
   id: ThreadId;
   seedVisitedAt?: string | undefined;
@@ -45,11 +54,15 @@ export interface SyncThreadInput {
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  reportFolderLatestUpdatedAtByLabel: {},
+  reportFolderOrder: [],
   threadLastVisitedAtById: {},
 };
 
 const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
+const persistedReportFolderOrderLabels: string[] = [];
+const persistedReportFolderLatestUpdatedAtByLabel: Record<string, string> = {};
 const currentProjectCwdById = new Map<ProjectId, string>();
 let legacyKeysCleanedUp = false;
 
@@ -66,20 +79,34 @@ function readPersistedState(): UiState {
           continue;
         }
         hydratePersistedProjectState(JSON.parse(legacyRaw) as PersistedUiState);
-        return initialState;
+        return hydratedInitialState();
       }
       return initialState;
     }
     hydratePersistedProjectState(JSON.parse(raw) as PersistedUiState);
-    return initialState;
+    return hydratedInitialState();
   } catch {
     return initialState;
   }
 }
 
+function hydratedInitialState(): UiState {
+  return {
+    ...initialState,
+    reportFolderLatestUpdatedAtByLabel: {
+      ...persistedReportFolderLatestUpdatedAtByLabel,
+    },
+    reportFolderOrder: [...persistedReportFolderOrderLabels],
+  };
+}
+
 function hydratePersistedProjectState(parsed: PersistedUiState): void {
   persistedExpandedProjectCwds.clear();
   persistedProjectOrderCwds.length = 0;
+  persistedReportFolderOrderLabels.length = 0;
+  for (const label of Object.keys(persistedReportFolderLatestUpdatedAtByLabel)) {
+    delete persistedReportFolderLatestUpdatedAtByLabel[label];
+  }
   for (const cwd of parsed.expandedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
       persistedExpandedProjectCwds.add(cwd);
@@ -88,6 +115,27 @@ function hydratePersistedProjectState(parsed: PersistedUiState): void {
   for (const cwd of parsed.projectOrderCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwds.includes(cwd)) {
       persistedProjectOrderCwds.push(cwd);
+    }
+  }
+  for (const label of parsed.reportFolderOrderLabels ?? []) {
+    if (
+      typeof label === "string" &&
+      label.trim().length > 0 &&
+      !persistedReportFolderOrderLabels.includes(label)
+    ) {
+      persistedReportFolderOrderLabels.push(label);
+    }
+  }
+  for (const [label, latestUpdatedAt] of Object.entries(
+    parsed.reportFolderLatestUpdatedAtByLabel ?? {},
+  )) {
+    if (
+      typeof label === "string" &&
+      label.trim().length > 0 &&
+      typeof latestUpdatedAt === "string" &&
+      latestUpdatedAt.length > 0
+    ) {
+      persistedReportFolderLatestUpdatedAtByLabel[label] = latestUpdatedAt;
     }
   }
 }
@@ -107,11 +155,21 @@ function persistState(state: UiState): void {
       const cwd = currentProjectCwdById.get(projectId);
       return cwd ? [cwd] : [];
     });
+    const reportFolderOrderLabels = dedupeStrings(state.reportFolderOrder);
+    const retainedReportFolderLabels = new Set(reportFolderOrderLabels);
+    const reportFolderLatestUpdatedAtByLabel = Object.fromEntries(
+      Object.entries(state.reportFolderLatestUpdatedAtByLabel).filter(
+        ([label, latestUpdatedAt]) =>
+          retainedReportFolderLabels.has(label) && latestUpdatedAt.length > 0,
+      ),
+    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
         expandedProjectCwds,
         projectOrderCwds,
+        reportFolderLatestUpdatedAtByLabel,
+        reportFolderOrderLabels,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -141,10 +199,32 @@ function recordsEqual<T>(left: Record<string, T>, right: Record<string, T>): boo
   return true;
 }
 
+function dedupeStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const value of values) {
+    if (value.length === 0 || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    deduped.push(value);
+  }
+  return deduped;
+}
+
 function projectOrdersEqual(left: readonly ProjectId[], right: readonly ProjectId[]): boolean {
   return (
     left.length === right.length && left.every((projectId, index) => projectId === right[index])
   );
+}
+
+function stringOrdersEqual(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function timestampMs(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
 export function syncProjects(state: UiState, projects: readonly SyncProjectInput[]): UiState {
@@ -242,6 +322,86 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
     ...state,
     projectExpandedById: nextExpandedById,
     projectOrder: nextProjectOrder,
+  };
+}
+
+export function syncReportFolders(
+  state: UiState,
+  folders: readonly SyncReportFolderInput[],
+): UiState {
+  const latestUpdatedAtByLabel = new Map<string, string>();
+
+  for (const folder of folders) {
+    const label = folder.label.trim();
+    if (label.length === 0 || folder.latestUpdatedAt.length === 0) {
+      continue;
+    }
+    const currentLatest = latestUpdatedAtByLabel.get(label);
+    if (
+      currentLatest === undefined ||
+      timestampMs(folder.latestUpdatedAt) > timestampMs(currentLatest)
+    ) {
+      latestUpdatedAtByLabel.set(label, folder.latestUpdatedAt);
+    }
+  }
+
+  const incomingLabels = [...latestUpdatedAtByLabel.keys()].toSorted((left, right) => {
+    const byUpdatedAt =
+      timestampMs(latestUpdatedAtByLabel.get(right) ?? "") -
+      timestampMs(latestUpdatedAtByLabel.get(left) ?? "");
+    if (byUpdatedAt !== 0) {
+      return byUpdatedAt;
+    }
+    return left.localeCompare(right);
+  });
+  const incomingLabelSet = new Set(incomingLabels);
+  const existingOrder = dedupeStrings(state.reportFolderOrder).filter((label) =>
+    incomingLabelSet.has(label),
+  );
+  const existingOrderSet = new Set(existingOrder);
+  const hasPreviousFolderState =
+    state.reportFolderOrder.length > 0 ||
+    Object.keys(state.reportFolderLatestUpdatedAtByLabel).length > 0;
+
+  const nextLatestUpdatedAtByLabel = Object.fromEntries(latestUpdatedAtByLabel);
+  const nextReportFolderOrder = hasPreviousFolderState
+    ? (() => {
+        const baseOrder = [
+          ...existingOrder,
+          ...incomingLabels.filter((label) => !existingOrderSet.has(label)),
+        ];
+        const promotedLabelSet = new Set<string>();
+        for (const label of incomingLabels) {
+          if (!existingOrderSet.has(label)) {
+            promotedLabelSet.add(label);
+            continue;
+          }
+          const previousLatest = state.reportFolderLatestUpdatedAtByLabel[label];
+          const nextLatest = latestUpdatedAtByLabel.get(label);
+          if (
+            previousLatest !== undefined &&
+            nextLatest !== undefined &&
+            timestampMs(nextLatest) > timestampMs(previousLatest)
+          ) {
+            promotedLabelSet.add(label);
+          }
+        }
+        const promotedLabels = incomingLabels.filter((label) => promotedLabelSet.has(label));
+        return [...promotedLabels, ...baseOrder.filter((label) => !promotedLabelSet.has(label))];
+      })()
+    : incomingLabels;
+
+  if (
+    stringOrdersEqual(state.reportFolderOrder, nextReportFolderOrder) &&
+    recordsEqual(state.reportFolderLatestUpdatedAtByLabel, nextLatestUpdatedAtByLabel)
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    reportFolderLatestUpdatedAtByLabel: nextLatestUpdatedAtByLabel,
+    reportFolderOrder: nextReportFolderOrder,
   };
 }
 
@@ -381,8 +541,34 @@ export function reorderProjects(
   };
 }
 
+export function reorderReportFolders(
+  state: UiState,
+  draggedFolderLabel: string,
+  targetFolderLabel: string,
+): UiState {
+  if (draggedFolderLabel === targetFolderLabel) {
+    return state;
+  }
+  const draggedIndex = state.reportFolderOrder.findIndex((label) => label === draggedFolderLabel);
+  const targetIndex = state.reportFolderOrder.findIndex((label) => label === targetFolderLabel);
+  if (draggedIndex < 0 || targetIndex < 0) {
+    return state;
+  }
+  const reportFolderOrder = [...state.reportFolderOrder];
+  const [draggedFolder] = reportFolderOrder.splice(draggedIndex, 1);
+  if (!draggedFolder) {
+    return state;
+  }
+  reportFolderOrder.splice(targetIndex, 0, draggedFolder);
+  return {
+    ...state,
+    reportFolderOrder,
+  };
+}
+
 interface UiStateStore extends UiState {
   syncProjects: (projects: readonly SyncProjectInput[]) => void;
+  syncReportFolders: (folders: readonly SyncReportFolderInput[]) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
   markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
   markThreadUnread: (threadId: ThreadId, latestTurnCompletedAt: string | null | undefined) => void;
@@ -390,11 +576,13 @@ interface UiStateStore extends UiState {
   toggleProject: (projectId: ProjectId) => void;
   setProjectExpanded: (projectId: ProjectId, expanded: boolean) => void;
   reorderProjects: (draggedProjectId: ProjectId, targetProjectId: ProjectId) => void;
+  reorderReportFolders: (draggedFolderLabel: string, targetFolderLabel: string) => void;
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
   syncProjects: (projects) => set((state) => syncProjects(state, projects)),
+  syncReportFolders: (folders) => set((state) => syncReportFolders(state, folders)),
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
@@ -406,6 +594,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setProjectExpanded(state, projectId, expanded)),
   reorderProjects: (draggedProjectId, targetProjectId) =>
     set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
+  reorderReportFolders: (draggedFolderLabel, targetFolderLabel) =>
+    set((state) => reorderReportFolders(state, draggedFolderLabel, targetFolderLabel)),
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));

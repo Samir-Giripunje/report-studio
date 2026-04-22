@@ -175,6 +175,17 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
 } as const;
 const EMPTY_REPORTS: ReadonlyArray<ReportRecord> = [];
 
+function latestReportUpdatedAt(reports: ReadonlyArray<ReportRecord>): string {
+  return reports.reduce((latestUpdatedAt, report) => {
+    if (latestUpdatedAt.length === 0) {
+      return report.updatedAt;
+    }
+    return Date.parse(report.updatedAt) > Date.parse(latestUpdatedAt)
+      ? report.updatedAt
+      : latestUpdatedAt;
+  }, "");
+}
+
 function toSidebarActionErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -780,21 +791,60 @@ function SortableProjectItem({
   );
 }
 
+function SortableReportFolderItem({
+  folderLabel,
+  children,
+}: {
+  folderLabel: string;
+  children: (handleProps: SortableProjectHandleProps) => ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id: folderLabel });
+  return (
+    <li
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+      }}
+      className={`group/menu-item relative rounded-md ${
+        isDragging ? "z-20 opacity-80" : ""
+      } ${isOver && !isDragging ? "ring-1 ring-primary/40" : ""}`}
+      data-sidebar="menu-item"
+      data-slot="sidebar-menu-item"
+    >
+      {children({ attributes, listeners, setActivatorNodeRef })}
+    </li>
+  );
+}
+
 export default function Sidebar() {
   const queryClient = useQueryClient();
   const reportsSnapshotQuery = useQuery(reportSnapshotQueryOptions());
   const projects = useStore((store) => store.projects);
   const sidebarThreadsById = useStore((store) => store.sidebarThreadsById);
   const threadIdsByProjectId = useStore((store) => store.threadIdsByProjectId);
-  const { projectExpandedById, projectOrder, threadLastVisitedAtById } = useUiStateStore(
-    useShallow((store) => ({
-      projectExpandedById: store.projectExpandedById,
-      projectOrder: store.projectOrder,
-      threadLastVisitedAtById: store.threadLastVisitedAtById,
-    })),
-  );
+  const { projectExpandedById, projectOrder, reportFolderOrder, threadLastVisitedAtById } =
+    useUiStateStore(
+      useShallow((store) => ({
+        projectExpandedById: store.projectExpandedById,
+        projectOrder: store.projectOrder,
+        reportFolderOrder: store.reportFolderOrder,
+        threadLastVisitedAtById: store.threadLastVisitedAtById,
+      })),
+    );
   const markThreadUnread = useUiStateStore((store) => store.markThreadUnread);
+  const syncReportFolders = useUiStateStore((store) => store.syncReportFolders);
   const toggleProject = useUiStateStore((store) => store.toggleProject);
+  const reorderReportFolders = useUiStateStore((store) => store.reorderReportFolders);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftThreadByProjectId = useComposerDraftStore(
@@ -857,6 +907,8 @@ export default function Sidebar() {
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<ThreadId, HTMLButtonElement>());
   const dragInProgressRef = useRef(false);
+  const reportFolderDragInProgressRef = useRef(false);
+  const suppressReportFolderClickAfterDragRef = useRef(false);
   const suppressProjectClickAfterDragRef = useRef(false);
   const suppressProjectClickForContextMenuRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
@@ -891,24 +943,56 @@ export default function Sidebar() {
     [appSettings.sidebarReportSortOrder, reports],
   );
   const groupedReports = useMemo(() => groupReportsForSidebar(sortedReports), [sortedReports]);
-  const availableReportFolders = useMemo(
-    () => groupedReports.folderGroups.map((group) => group.label),
+  const reportFolderSyncInputs = useMemo(
+    () =>
+      groupedReports.folderGroups
+        .map((group) => ({
+          label: group.label,
+          latestUpdatedAt: latestReportUpdatedAt(group.reports),
+        }))
+        .toSorted((left, right) => {
+          const byUpdatedAt = Date.parse(right.latestUpdatedAt) - Date.parse(left.latestUpdatedAt);
+          if (byUpdatedAt !== 0) {
+            return byUpdatedAt;
+          }
+          return left.label.localeCompare(right.label);
+        }),
     [groupedReports.folderGroups],
+  );
+  const resolvedReportFolderOrder = useMemo(
+    () =>
+      reportFolderOrder.length > 0
+        ? reportFolderOrder
+        : reportFolderSyncInputs.map((folder) => folder.label),
+    [reportFolderOrder, reportFolderSyncInputs],
+  );
+  const orderedProjectFolders = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: groupedReports.folderGroups,
+        preferredIds: resolvedReportFolderOrder,
+        getId: (group) => group.label,
+      }),
+    [groupedReports.folderGroups, resolvedReportFolderOrder],
+  );
+  const availableReportFolders = useMemo(
+    () => orderedProjectFolders.map((group) => group.label),
+    [orderedProjectFolders],
   );
   const normalizedReportSearchQuery = reportSearchQuery.trim().toLocaleLowerCase();
   const filteredProjectFolders = useMemo(() => {
     if (normalizedReportSearchQuery.length === 0) {
-      return groupedReports.folderGroups;
+      return orderedProjectFolders;
     }
 
-    return groupedReports.folderGroups.filter(
+    return orderedProjectFolders.filter(
       (group) =>
         group.label.toLocaleLowerCase().includes(normalizedReportSearchQuery) ||
         group.reports.some((report) =>
           reportMatchesSidebarQuery(report, normalizedReportSearchQuery),
         ),
     );
-  }, [groupedReports.folderGroups, normalizedReportSearchQuery]);
+  }, [normalizedReportSearchQuery, orderedProjectFolders]);
   const visibleProjectFolders = useMemo(() => {
     if (
       showAllProjectFolders ||
@@ -919,6 +1003,9 @@ export default function Sidebar() {
 
     return filteredProjectFolders.slice(0, SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT);
   }, [filteredProjectFolders, showAllProjectFolders]);
+  useEffect(() => {
+    syncReportFolders(reportFolderSyncInputs);
+  }, [reportFolderSyncInputs, syncReportFolders]);
   const activeReport =
     routeReportId !== null
       ? (sortedReports.find((report) => report.id === routeReportId) ?? null)
@@ -1863,6 +1950,34 @@ export default function Sidebar() {
 
   const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
     dragInProgressRef.current = false;
+  }, []);
+
+  const handleReportFolderDragStart = useCallback((_event: DragStartEvent) => {
+    reportFolderDragInProgressRef.current = true;
+    suppressReportFolderClickAfterDragRef.current = true;
+  }, []);
+
+  const handleReportFolderDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      reportFolderDragInProgressRef.current = false;
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const activeFolderLabel = String(active.id);
+      const overFolderLabel = String(over.id);
+      const visibleFolderLabels = new Set(visibleProjectFolders.map((group) => group.label));
+      if (
+        !visibleFolderLabels.has(activeFolderLabel) ||
+        !visibleFolderLabels.has(overFolderLabel)
+      ) {
+        return;
+      }
+      reorderReportFolders(activeFolderLabel, overFolderLabel);
+    },
+    [reorderReportFolders, visibleProjectFolders],
+  );
+
+  const handleReportFolderDragCancel = useCallback((_event: DragCancelEvent) => {
+    reportFolderDragInProgressRef.current = false;
   }, []);
 
   const animatedProjectListsRef = useRef(new WeakSet<HTMLElement>());
@@ -2836,52 +2951,83 @@ export default function Sidebar() {
 
                   {projectsExpanded ? (
                     <div className="mt-2 ml-4 border-border/70 border-l pl-3">
-                      <SidebarMenu>
-                        {visibleProjectFolders.map((group) => {
-                          const isSelected = activeProjectFolder === group.label;
-                          return (
-                            <SidebarMenuItem key={group.key}>
+                      <DndContext
+                        sensors={projectDnDSensors}
+                        collisionDetection={projectCollisionDetection}
+                        modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                        onDragStart={handleReportFolderDragStart}
+                        onDragEnd={handleReportFolderDragEnd}
+                        onDragCancel={handleReportFolderDragCancel}
+                      >
+                        <SidebarMenu>
+                          <SortableContext
+                            items={visibleProjectFolders.map((group) => group.label)}
+                            strategy={verticalListSortingStrategy}
+                          >
+                            {visibleProjectFolders.map((group) => {
+                              const isSelected = activeProjectFolder === group.label;
+                              return (
+                                <SortableReportFolderItem key={group.key} folderLabel={group.label}>
+                                  {(dragHandleProps) => (
+                                    <SidebarMenuButton
+                                      ref={dragHandleProps.setActivatorNodeRef}
+                                      size="sm"
+                                      isActive={isSelected}
+                                      className="min-h-9 cursor-grab gap-2 rounded-xl px-2.5 py-1.5 text-left active:cursor-grabbing"
+                                      {...dragHandleProps.attributes}
+                                      {...dragHandleProps.listeners}
+                                      onPointerDownCapture={() => {
+                                        suppressReportFolderClickAfterDragRef.current = false;
+                                      }}
+                                      onClick={(event) => {
+                                        if (
+                                          reportFolderDragInProgressRef.current ||
+                                          suppressReportFolderClickAfterDragRef.current
+                                        ) {
+                                          suppressReportFolderClickAfterDragRef.current = false;
+                                          event.preventDefault();
+                                          event.stopPropagation();
+                                          return;
+                                        }
+                                        void navigate({
+                                          to: "/reports",
+                                          search: () => ({ folder: group.label }) as never,
+                                        });
+                                      }}
+                                    >
+                                      <FolderIcon className="size-3.5 shrink-0 text-foreground/75" />
+                                      <span className="flex-1 truncate text-[13px] font-medium">
+                                        {group.label}
+                                      </span>
+                                    </SidebarMenuButton>
+                                  )}
+                                </SortableReportFolderItem>
+                              );
+                            })}
+                          </SortableContext>
+
+                          {filteredProjectFolders.length > SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT ? (
+                            <SidebarMenuItem>
                               <SidebarMenuButton
                                 size="sm"
-                                isActive={isSelected}
-                                className="min-h-9 gap-2 rounded-xl px-2.5 py-1.5 text-left"
-                                onClick={() =>
-                                  void navigate({
-                                    to: "/reports",
-                                    search: () => ({ folder: group.label }) as never,
-                                  })
-                                }
+                                className="min-h-9 gap-2 rounded-xl px-2.5 py-1.5 text-left text-muted-foreground/80"
+                                onClick={() => setShowAllProjectFolders((current) => !current)}
                               >
-                                <FolderIcon className="size-3.5 shrink-0 text-foreground/75" />
-                                <span className="flex-1 truncate text-[13px] font-medium">
-                                  {group.label}
-                                </span>
+                                <EllipsisIcon className="size-3.5 shrink-0" />
+                                <span>{showAllProjectFolders ? "Show less" : "More"}</span>
                               </SidebarMenuButton>
                             </SidebarMenuItem>
-                          );
-                        })}
+                          ) : null}
 
-                        {filteredProjectFolders.length > SIDEBAR_PROJECT_FOLDER_PREVIEW_COUNT ? (
-                          <SidebarMenuItem>
-                            <SidebarMenuButton
-                              size="sm"
-                              className="min-h-9 gap-2 rounded-xl px-2.5 py-1.5 text-left text-muted-foreground/80"
-                              onClick={() => setShowAllProjectFolders((current) => !current)}
-                            >
-                              <EllipsisIcon className="size-3.5 shrink-0" />
-                              <span>{showAllProjectFolders ? "Show less" : "More"}</span>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        ) : null}
-
-                        {filteredProjectFolders.length === 0 ? (
-                          <SidebarMenuItem>
-                            <div className="px-3 py-2 text-xs text-muted-foreground/60">
-                              No folders found
-                            </div>
-                          </SidebarMenuItem>
-                        ) : null}
-                      </SidebarMenu>
+                          {filteredProjectFolders.length === 0 ? (
+                            <SidebarMenuItem>
+                              <div className="px-3 py-2 text-xs text-muted-foreground/60">
+                                No folders found
+                              </div>
+                            </SidebarMenuItem>
+                          ) : null}
+                        </SidebarMenu>
+                      </DndContext>
                     </div>
                   ) : null}
                 </div>

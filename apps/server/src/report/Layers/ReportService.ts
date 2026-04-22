@@ -5,13 +5,13 @@ import {
   ReportId,
   ReportPlan,
   ReportMutationResult,
-  type ReportSourceDocument,
   ReportServiceError,
   type ReportSnapshot,
   type ReportRecord,
   ReportRecord as ReportRecordSchema,
   ReportExecutionState as ReportExecutionStateSchema,
 } from "@t3tools/contracts";
+import { normalizeReportSourceDocuments } from "@t3tools/shared/report";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
@@ -26,8 +26,10 @@ import {
   applyPlanningDecision,
   generateReportExecution,
   maybePlanReportWithAgent,
+  runReportChatWithAgent,
 } from "../agent.ts";
 import { ReportService, type ReportServiceShape } from "../Services/ReportService.ts";
+import { applyAutomaticPlanningTitle } from "../title.ts";
 import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
@@ -48,18 +50,6 @@ function toReportServiceError(message: string, cause?: unknown): ReportServiceEr
     message,
     ...(cause !== undefined ? { cause } : {}),
   });
-}
-
-function normalizeDocuments(
-  documents: ReadonlyArray<ReportSourceDocument>,
-): ReadonlyArray<ReportSourceDocument> {
-  return documents
-    .map((document) => ({
-      name: document.name.trim(),
-      mimeType: document.mimeType.trim(),
-      textContent: document.textContent.trim(),
-    }))
-    .filter((document) => document.name.length > 0 && document.mimeType.length > 0);
 }
 
 function buildDefaultPlan(input: ReportCreateDraftInput): ReportPlan {
@@ -160,6 +150,19 @@ function buildDefaultPlan(input: ReportCreateDraftInput): ReportPlan {
       modelSelection: {
         provider: "codex",
         model: "gpt-5.4",
+      },
+      agentSwarm: {
+        orchestratorModel: null,
+        sectionAgentModel: null,
+        enabledTools: [
+          "list_documents",
+          "search_documents",
+          "read_document",
+          "list_tables",
+          "read_table",
+        ],
+        maxToolCallsPerSection: 15,
+        maxSectionRetries: 3,
       },
     },
     planning: {
@@ -336,6 +339,8 @@ const makeReportService = Effect.gen(function* () {
         input.modelSelection !== undefined
           ? input.modelSelection
           : existing.plan.orchestration.modelSelection;
+      const agentSwarm =
+        input.agentSwarm !== undefined ? input.agentSwarm : existing.plan.orchestration.agentSwarm;
       const report: ReportRecord = {
         ...existing,
         title,
@@ -349,6 +354,7 @@ const makeReportService = Effect.gen(function* () {
           orchestration: {
             ...existing.plan.orchestration,
             modelSelection,
+            agentSwarm,
           },
         },
         updatedAt: nowIso(),
@@ -406,7 +412,7 @@ const makeReportService = Effect.gen(function* () {
       }
 
       const createdAt = nowIso();
-      const documents = normalizeDocuments(input.documents);
+      const documents = normalizeReportSourceDocuments(input.documents);
       const providerApiKeys = yield* getProviderApiKeys();
       const modelDecision = yield* Effect.promise(() =>
         maybePlanReportWithAgent({
@@ -415,7 +421,7 @@ const makeReportService = Effect.gen(function* () {
           brief: input.brief,
           fileRefs: input.fileRefs,
           documents,
-          priorConversation: [],
+          priorConversation: existing.plan.planning.conversation,
         }),
       );
 
@@ -437,11 +443,16 @@ const makeReportService = Effect.gen(function* () {
               documents,
               createdAt,
             });
+      const titledPlan = applyAutomaticPlanningTitle({
+        currentTitle: existing.title,
+        plan,
+      });
 
       const report: ReportRecord = {
         ...existing,
+        title: titledPlan.title,
         status: "draft",
-        plan,
+        plan: titledPlan.plan,
         latestRun: null,
         updatedAt: createdAt,
       };
@@ -476,7 +487,7 @@ const makeReportService = Effect.gen(function* () {
       const createdAt = nowIso();
       const providerApiKeys = yield* getProviderApiKeys();
       const currentBrief = existing.plan.metadata.brief;
-      const currentDocuments = normalizeDocuments(
+      const currentDocuments = normalizeReportSourceDocuments(
         existing.plan.globalSourceConfig.userDocuments.documents,
       );
       const currentFileRefs = existing.plan.globalSourceConfig.userDocuments.fileRefs;
@@ -508,11 +519,16 @@ const makeReportService = Effect.gen(function* () {
               response: input.response,
               createdAt,
             });
+      const titledPlan = applyAutomaticPlanningTitle({
+        currentTitle: existing.title,
+        plan,
+      });
 
       const report: ReportRecord = {
         ...existing,
+        title: titledPlan.title,
         status: "draft",
-        plan,
+        plan: titledPlan.plan,
         latestRun: null,
         updatedAt: createdAt,
       };
@@ -554,11 +570,16 @@ const makeReportService = Effect.gen(function* () {
           `Report '${input.reportId}' must have a proposed structure before it can be approved.`,
         );
       }
+      const titledPlan = applyAutomaticPlanningTitle({
+        currentTitle: existing.title,
+        plan: nextPlan,
+      });
 
       const report: ReportRecord = {
         ...existing,
+        title: titledPlan.title,
         status: "approved",
-        plan: nextPlan,
+        plan: titledPlan.plan,
         updatedAt: createdAt,
       };
       return yield* saveReport(report);
@@ -630,6 +651,9 @@ const makeReportService = Effect.gen(function* () {
           finalArtifact: {
             format: existing.latestRun.finalArtifact?.format ?? "markdown",
             content: input.content,
+            // Preserve the citation index so numbered badges remain accurate
+            // even after the user manually edits the text content.
+            citations: existing.latestRun.finalArtifact?.citations ?? [],
           },
           updatedAt,
         },
@@ -640,7 +664,10 @@ const makeReportService = Effect.gen(function* () {
       Effect.mapError((cause) =>
         Schema.is(ReportServiceError)(cause)
           ? cause
-          : toReportServiceError(`Failed to update artifact for report '${input.reportId}'.`, cause),
+          : toReportServiceError(
+              `Failed to update artifact for report '${input.reportId}'.`,
+              cause,
+            ),
       ),
     );
 
@@ -666,6 +693,79 @@ const makeReportService = Effect.gen(function* () {
       ),
     );
 
+  const chatWithReport: ReportServiceShape["chatWithReport"] = (input) =>
+    Effect.gen(function* () {
+      const existing = yield* loadReport(input.reportId);
+
+      const artifact = existing.latestRun?.finalArtifact;
+      if (!artifact) {
+        return yield* toReportServiceError(
+          `Report '${input.reportId}' has no completed artifact to chat about.`,
+        );
+      }
+
+      const createdAt = nowIso();
+      const providerApiKeys = yield* getProviderApiKeys();
+
+      // Only include messages added after the planning phase was finalized
+      const lastOrchestratedAt = existing.plan.planning.lastOrchestratedAt;
+      const priorConversation = lastOrchestratedAt
+        ? existing.plan.planning.conversation.filter((m) => m.createdAt > lastOrchestratedAt)
+        : [];
+
+      const userMessage = {
+        id: `report-chat:${crypto.randomUUID()}`,
+        role: "user" as const,
+        text: input.message,
+        createdAt,
+      };
+
+      const replyText = yield* Effect.promise(() =>
+        runReportChatWithAgent({
+          apiKeys: providerApiKeys,
+          reportId: input.reportId,
+          plan: existing.plan,
+          reportContent: artifact.content,
+          priorConversation,
+          userMessage: input.message,
+        }),
+      );
+
+      const assistantMessage = {
+        id: `report-chat:${crypto.randomUUID()}`,
+        role: "assistant" as const,
+        text: replyText ?? "I was unable to generate a response. Please try again.",
+        createdAt: new Date().toISOString(),
+      };
+
+      const report: ReportRecord = {
+        ...existing,
+        plan: {
+          ...existing.plan,
+          planning: {
+            ...existing.plan.planning,
+            conversation: [
+              ...existing.plan.planning.conversation,
+              userMessage,
+              assistantMessage,
+            ],
+          },
+        },
+        updatedAt: assistantMessage.createdAt,
+      };
+
+      return yield* saveReport(report);
+    }).pipe(
+      Effect.mapError((cause) =>
+        Schema.is(ReportServiceError)(cause)
+          ? cause
+          : toReportServiceError(
+              `Failed to process chat message for report '${input.reportId}'.`,
+              cause,
+            ),
+      ),
+    );
+
   return {
     getSnapshot,
     createDraft,
@@ -677,6 +777,7 @@ const makeReportService = Effect.gen(function* () {
     startRun,
     updateArtifact,
     delete: deleteReport,
+    chatWithReport,
   } satisfies ReportServiceShape;
 });
 

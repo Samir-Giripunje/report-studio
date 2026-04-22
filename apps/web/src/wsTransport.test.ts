@@ -6,11 +6,6 @@ import {
   configureClientTracing,
 } from "./observability/clientTracing";
 import {
-  getSlowRpcAckRequests,
-  resetRequestLatencyStateForTests,
-  setSlowRpcAckThresholdMsForTests,
-} from "./rpc/requestLatencyState";
-import {
   getWsConnectionStatus,
   getWsConnectionUiState,
   resetWsConnectionStateForTests,
@@ -109,7 +104,6 @@ async function waitFor(assertion: () => void, timeoutMs = 1_000): Promise<void> 
 beforeEach(() => {
   vi.useRealTimers();
   sockets.length = 0;
-  resetRequestLatencyStateForTests();
   resetWsConnectionStateForTests();
 
   Object.defineProperty(globalThis, "window", {
@@ -135,7 +129,6 @@ beforeEach(() => {
 afterEach(async () => {
   globalThis.WebSocket = originalWebSocket;
   globalThis.fetch = originalFetch;
-  resetRequestLatencyStateForTests();
   resetWsConnectionStateForTests();
   await __resetClientTracingForTests();
   vi.restoreAllMocks();
@@ -294,62 +287,6 @@ describe("WsTransport", () => {
 
     await transport.dispose();
   });
-
-  it("marks unary requests as slow until the first server ack arrives", async () => {
-    const slowAckThresholdMs = 25;
-    setSlowRpcAckThresholdMsForTests(slowAckThresholdMs);
-    const transport = new WsTransport("ws://localhost:3020");
-
-    const requestPromise = transport.request((client) =>
-      client[WS_METHODS.serverUpsertKeybinding]({
-        command: "terminal.toggle",
-        key: "ctrl+k",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(sockets).toHaveLength(1);
-    });
-
-    const socket = getSocket();
-    socket.open();
-
-    await waitFor(() => {
-      expect(socket.sent).toHaveLength(1);
-    });
-
-    const requestMessage = JSON.parse(socket.sent[0] ?? "{}") as { id: string };
-    await waitFor(() => {
-      expect(getSlowRpcAckRequests()).toMatchObject([
-        {
-          requestId: requestMessage.id,
-          tag: WS_METHODS.serverUpsertKeybinding,
-        },
-      ]);
-    }, 1_000);
-
-    socket.serverMessage(
-      JSON.stringify({
-        _tag: "Exit",
-        requestId: requestMessage.id,
-        exit: {
-          _tag: "Success",
-          value: {
-            keybindings: [],
-            issues: [],
-          },
-        },
-      }),
-    );
-
-    await expect(requestPromise).resolves.toEqual({
-      keybindings: [],
-      issues: [],
-    });
-    expect(getSlowRpcAckRequests()).toEqual([]);
-
-    await transport.dispose();
-  }, 5_000);
 
   it("sends unary RPC requests and resolves successful exits", async () => {
     const transport = new WsTransport("ws://localhost:3020");

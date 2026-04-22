@@ -2,7 +2,6 @@ import { AlertTriangle, CloudOff, LoaderCircle, RotateCw } from "lucide-react";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME } from "../branding";
-import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
 import { useServerConfig } from "../rpc/serverState";
 import {
   exhaustWsReconnectIfStillWaiting,
@@ -82,13 +81,6 @@ function describeRecoveredToast(
   }
 
   return "Connection restored.";
-}
-
-function describeSlowRpcAckToast(requests: ReadonlyArray<SlowRpcAckRequest>): ReactNode {
-  const count = requests.length;
-  const thresholdSeconds = Math.round((requests[0]?.thresholdMs ?? 0) / 1000);
-
-  return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
 }
 
 export function shouldAutoReconnect(
@@ -483,45 +475,6 @@ export function WebSocketConnectionCoordinator() {
       }
     };
   }, []);
-
-  return null;
-}
-
-export function SlowRpcAckToastCoordinator() {
-  const slowRequests = useSlowRpcAckRequests();
-  const status = useWsConnectionStatus();
-  const toastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
-
-  useEffect(() => {
-    if (getWsConnectionUiState(status) !== "connected") {
-      if (toastIdRef.current) {
-        toastManager.close(toastIdRef.current);
-        toastIdRef.current = null;
-      }
-      return;
-    }
-
-    if (slowRequests.length === 0) {
-      if (toastIdRef.current) {
-        toastManager.close(toastIdRef.current);
-        toastIdRef.current = null;
-      }
-      return;
-    }
-
-    const nextToast = {
-      description: describeSlowRpcAckToast(slowRequests),
-      timeout: 0,
-      title: "Some requests are slow",
-      type: "warning" as const,
-    };
-
-    if (toastIdRef.current) {
-      toastManager.update(toastIdRef.current, nextToast);
-    } else {
-      toastIdRef.current = toastManager.add(nextToast);
-    }
-  }, [slowRequests, status]);
 
   return null;
 }

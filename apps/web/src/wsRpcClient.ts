@@ -7,6 +7,9 @@ import {
   type NativeApi,
   ORCHESTRATION_WS_METHODS,
   REPORT_WS_METHODS,
+  type ReportMutationResult,
+  type ReportRunProgressStep,
+  type ReportStartRunInput,
   type ServerSettingsPatch,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -116,9 +119,13 @@ export interface WsRpcClient {
     readonly beginPlanning: RpcUnaryMethod<typeof REPORT_WS_METHODS.beginPlanning>;
     readonly respondToPlanning: RpcUnaryMethod<typeof REPORT_WS_METHODS.respondToPlanning>;
     readonly approve: RpcUnaryMethod<typeof REPORT_WS_METHODS.approve>;
-    readonly startRun: RpcUnaryMethod<typeof REPORT_WS_METHODS.startRun>;
+    readonly startRun: (
+      input: ReportStartRunInput,
+      onProgress?: (event: ReportRunProgressStep) => void,
+    ) => Promise<ReportMutationResult>;
     readonly updateArtifact: RpcUnaryMethod<typeof REPORT_WS_METHODS.updateArtifact>;
     readonly delete: RpcUnaryMethod<typeof REPORT_WS_METHODS.delete>;
+    readonly chatWithReport: RpcUnaryMethod<typeof REPORT_WS_METHODS.chatWithReport>;
   };
 }
 
@@ -272,9 +279,31 @@ export function createWsRpcClient(transport = new WsTransport()): WsRpcClient {
       respondToPlanning: (input) =>
         transport.request((client) => client[REPORT_WS_METHODS.respondToPlanning](input)),
       approve: (input) => transport.request((client) => client[REPORT_WS_METHODS.approve](input)),
-      startRun: (input) => transport.request((client) => client[REPORT_WS_METHODS.startRun](input)),
-      updateArtifact: (input) => transport.request((client) => client[REPORT_WS_METHODS.updateArtifact](input)),
+      startRun: async (input, onProgress) => {
+        let result: ReportMutationResult | null = null;
+
+        await transport.requestStream(
+          (client) => client[REPORT_WS_METHODS.startRun](input),
+          (event) => {
+            if (event.kind === "run.progress") {
+              onProgress?.(event);
+            } else if (event.kind === "run.finished") {
+              result = event.result;
+            }
+          },
+        );
+
+        if (result) {
+          return result;
+        }
+
+        throw new Error("Report run stream completed without a final result.");
+      },
+      updateArtifact: (input) =>
+        transport.request((client) => client[REPORT_WS_METHODS.updateArtifact](input)),
       delete: (input) => transport.request((client) => client[REPORT_WS_METHODS.delete](input)),
+      chatWithReport: (input) =>
+        transport.request((client) => client[REPORT_WS_METHODS.chatWithReport](input)),
     },
   };
 }

@@ -1,30 +1,14 @@
 import type { ReportSourceDocument } from "@t3tools/contracts";
-import { normalizeReportFileRefs } from "@t3tools/shared/report";
+import {
+  canReadReportDocumentTypeAsText,
+  detectReportDocumentType,
+  normalizeReportFileRefs,
+  normalizeReportSourceDocuments as normalizeSharedReportSourceDocuments,
+  type ReportDocumentType,
+} from "@t3tools/shared/report";
 
 const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_TEXT_CONTENT_CHARS = 24_000;
-
-const TEXT_MIME_TYPES = new Set([
-  "application/json",
-  "application/ld+json",
-  "application/xml",
-  "application/x-yaml",
-  "application/yaml",
-  "application/csv",
-]);
-
-const TEXT_FILE_EXTENSIONS = new Set([
-  ".csv",
-  ".json",
-  ".log",
-  ".md",
-  ".markdown",
-  ".txt",
-  ".tsv",
-  ".xml",
-  ".yaml",
-  ".yml",
-]);
 
 function limitTextContent(text: string): string {
   const normalized = text.replace(/\r\n/g, "\n").trim();
@@ -34,32 +18,39 @@ function limitTextContent(text: string): string {
   return `${normalized.slice(0, MAX_TEXT_CONTENT_CHARS).trim()}\n...[truncated]`;
 }
 
-function fileExtension(name: string): string {
-  const lastDotIndex = name.lastIndexOf(".");
-  if (lastDotIndex < 0) {
-    return "";
-  }
-  return name.slice(lastDotIndex).toLowerCase();
+function detectFileDocumentType(file: File): ReportDocumentType {
+  return detectReportDocumentType({
+    name: file.name,
+    mimeType: file.type,
+  });
 }
 
-function canExtractTextFromFile(file: File): boolean {
+function canReadFileAsDirectText(file: File, documentType: ReportDocumentType): boolean {
   if (file.size > MAX_TEXT_FILE_BYTES) {
     return false;
   }
 
-  const mimeType = file.type.trim().toLowerCase();
-  if (mimeType.startsWith("text/") || TEXT_MIME_TYPES.has(mimeType)) {
-    return true;
-  }
-
-  return TEXT_FILE_EXTENSIONS.has(fileExtension(file.name));
+  return canReadReportDocumentTypeAsText(documentType);
 }
 
-export async function readReportSourceDocument(file: File): Promise<ReportSourceDocument> {
-  const textContent =
-    canExtractTextFromFile(file) && typeof file.text === "function"
-      ? limitTextContent(await file.text())
-      : "";
+export async function readReportSourceDocumentForLlm(file: File): Promise<ReportSourceDocument> {
+  let textContent = "";
+  const documentType = detectFileDocumentType(file);
+
+  if (documentType === "pdf") {
+    // PDFs are binary — skip the byte-size check (images inflate file size but not text
+    // output) and use PDF.js to extract the actual text content from all pages.
+    try {
+      const { extractTextFromPdf } = await import("./pdfExtract");
+      const buffer = await file.arrayBuffer();
+      textContent = limitTextContent(await extractTextFromPdf(buffer));
+    } catch {
+      // Extraction failed (e.g. password-protected or corrupted PDF).
+      // textContent stays "" — the planner will note the content as unavailable.
+    }
+  } else if (canReadFileAsDirectText(file, documentType)) {
+    textContent = limitTextContent(await file.text());
+  }
 
   return {
     name: file.name.trim(),
@@ -68,30 +59,12 @@ export async function readReportSourceDocument(file: File): Promise<ReportSource
   };
 }
 
+export const readReportSourceDocument = readReportSourceDocumentForLlm;
+
 export function normalizeReportSourceDocuments(
   documents: ReadonlyArray<ReportSourceDocument>,
 ): ReportSourceDocument[] {
-  const normalized: ReportSourceDocument[] = [];
-  const seen = new Set<string>();
-
-  for (const document of documents) {
-    const name = document.name.trim();
-    const mimeType = document.mimeType.trim().toLowerCase();
-    const textContent = document.textContent.trim();
-    if (name.length === 0 || mimeType.length === 0) {
-      continue;
-    }
-
-    const dedupeKey = `${name}::${mimeType}`;
-    if (seen.has(dedupeKey)) {
-      continue;
-    }
-
-    seen.add(dedupeKey);
-    normalized.push({ name, mimeType, textContent });
-  }
-
-  return normalized;
+  return normalizeSharedReportSourceDocuments(documents);
 }
 
 export function reportFileRefsFromDocuments(

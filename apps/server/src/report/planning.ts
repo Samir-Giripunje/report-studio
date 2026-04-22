@@ -7,7 +7,9 @@ import type {
   ReportSourceDocument,
 } from "@t3tools/contracts";
 
-import { normalizeReportFileRefs } from "@t3tools/shared/report";
+import { normalizeReportFileRefs, normalizeReportSourceDocuments } from "@t3tools/shared/report";
+
+import { buildContextualReportTitle } from "./title.ts";
 
 type ReportPlanSection = ReportPlan["sectionTree"][number];
 
@@ -194,6 +196,7 @@ function buildOutline(input: {
   readonly title: string;
   readonly brief: string;
   readonly fileRefs: ReadonlyArray<string>;
+  readonly documents?: ReadonlyArray<ReportSourceDocument>;
 }): {
   readonly outline: ReportPlanningOutline;
   readonly sectionTree: ReadonlyArray<ReportPlanSection>;
@@ -484,12 +487,22 @@ function buildOutline(input: {
               ];
 
   const outline: ReportPlanningOutline = {
-    title: `${input.title} Structure`,
+    title: buildContextualReportTitle({
+      fallbackTitle: input.title,
+      brief: input.brief,
+      fileRefs: input.fileRefs,
+      ...(input.documents !== undefined ? { documents: input.documents } : {}),
+    }),
     summary: `The report will synthesize ${sourceSummary} into a decision-ready structure aligned with the current brief.`,
     sections: sections.map((section) => ({
       id: section.id,
       title: section.title,
       summary: section.purpose,
+      keyPoints: [...section.contentGuidance],
+      wordTarget: {
+        min: section.lengthTarget.minWords,
+        max: section.lengthTarget.maxWords,
+      },
     })),
   };
 
@@ -589,7 +602,7 @@ export function beginReportPlanning(input: {
           ...input.plan.globalSourceConfig.userDocuments,
           fileRefs,
           documents: input.documents
-            ? [...input.documents]
+            ? normalizeReportSourceDocuments(input.documents)
             : input.plan.globalSourceConfig.userDocuments.documents,
         },
       },
@@ -601,6 +614,7 @@ export function beginReportPlanning(input: {
     title: input.plan.metadata.title,
     brief,
     fileRefs,
+    ...(input.documents !== undefined ? { documents: input.documents } : {}),
   });
 
   return {
@@ -616,7 +630,7 @@ export function beginReportPlanning(input: {
         ...input.plan.globalSourceConfig.userDocuments,
         fileRefs,
         documents: input.documents
-          ? [...input.documents]
+          ? normalizeReportSourceDocuments(input.documents)
           : input.plan.globalSourceConfig.userDocuments.documents,
       },
     },
@@ -662,6 +676,7 @@ export function respondToReportPlanning(input: {
     title: input.plan.metadata.title,
     brief: nextBrief,
     fileRefs,
+    documents: input.plan.globalSourceConfig.userDocuments.documents,
   });
 
   const assistantPrefix =

@@ -1,6 +1,7 @@
 import {
   ReportApproveInput,
   ReportBeginPlanningInput,
+  ReportChatInput,
   ReportCreateDraftInput,
   ReportDeleteInput,
   type ReportDeleteResult,
@@ -39,6 +40,12 @@ export interface ReportServiceShape {
   ) => Effect.Effect<ReportMutationResult, ReportServiceError>;
   readonly startRun: (
     input: ReportStartRunInput,
+    onProgress?: (event: {
+      at: string;
+      kind: string;
+      message: string;
+      payload: unknown;
+    }) => Promise<void>,
   ) => Effect.Effect<ReportMutationResult, ReportServiceError>;
   readonly updateArtifact: (
     input: ReportUpdateArtifactInput,
@@ -46,6 +53,9 @@ export interface ReportServiceShape {
   readonly delete: (
     input: ReportDeleteInput,
   ) => Effect.Effect<ReportDeleteResult, ReportServiceError>;
+  readonly chatWithReport: (
+    input: ReportChatInput,
+  ) => Effect.Effect<ReportMutationResult, ReportServiceError>;
 }
 
 export class ReportService extends ServiceMap.Service<ReportService, ReportServiceShape>()(

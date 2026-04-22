@@ -17,7 +17,6 @@ import { Throttler } from "@tanstack/react-pacer";
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import {
-  SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
   WebSocketConnectionSurface,
 } from "../components/WebSocketConnectionSurface";
@@ -79,7 +78,6 @@ function RootRouteView() {
         <ServerStateBootstrap />
         <EventRouter />
         <WebSocketConnectionCoordinator />
-        <SlowRpcAckToastCoordinator />
         <WebSocketConnectionSurface>
           <AppSidebarLayout>
             <Outlet />

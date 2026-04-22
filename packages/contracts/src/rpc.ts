@@ -48,11 +48,13 @@ import {
   REPORT_WS_METHODS,
   ReportApproveInput,
   ReportBeginPlanningInput,
+  ReportChatInput,
   ReportCreateDraftInput,
   ReportDeleteInput,
   ReportDeleteResult,
   ReportMutationResult,
   ReportRespondToPlanningInput,
+  ReportRunProgressEvent,
   ReportServiceError,
   ReportSnapshot,
   ReportStartRunInput,
@@ -366,8 +368,9 @@ export const WsReportApproveRpc = Rpc.make(REPORT_WS_METHODS.approve, {
 
 export const WsReportStartRunRpc = Rpc.make(REPORT_WS_METHODS.startRun, {
   payload: ReportStartRunInput,
-  success: ReportMutationResult,
+  success: ReportRunProgressEvent,
   error: ReportServiceError,
+  stream: true,
 });
 
 export const WsReportUpdateArtifactRpc = Rpc.make(REPORT_WS_METHODS.updateArtifact, {
@@ -379,6 +382,12 @@ export const WsReportUpdateArtifactRpc = Rpc.make(REPORT_WS_METHODS.updateArtifa
 export const WsReportDeleteRpc = Rpc.make(REPORT_WS_METHODS.delete, {
   payload: ReportDeleteInput,
   success: ReportDeleteResult,
+  error: ReportServiceError,
+});
+
+export const WsReportChatRpc = Rpc.make(REPORT_WS_METHODS.chatWithReport, {
+  payload: ReportChatInput,
+  success: ReportMutationResult,
   error: ReportServiceError,
 });
 
@@ -456,4 +465,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsReportStartRunRpc,
   WsReportUpdateArtifactRpc,
   WsReportDeleteRpc,
+  WsReportChatRpc,
 );

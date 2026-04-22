@@ -22,6 +22,7 @@ export const REPORT_WS_METHODS = {
   startRun: "reports.startRun",
   updateArtifact: "reports.updateArtifact",
   delete: "reports.delete",
+  chatWithReport: "reports.chatWithReport",
 } as const;
 
 export const ReportPlanStatus = Schema.Literals(["draft", "finalized"]);
@@ -53,6 +54,16 @@ export type ReportOutputFormat = typeof ReportOutputFormat.Type;
 
 export const ReportCitationStyle = Schema.Literals(["inline", "footnote", "endnote"]);
 export type ReportCitationStyle = typeof ReportCitationStyle.Type;
+
+export const ReportCitation = Schema.Struct({
+  /** 1-based numeric index used as the in-text marker [N]. */
+  index: PositiveInt,
+  /** Exact document filename as returned by list_documents. */
+  documentName: TrimmedNonEmptyString,
+  /** Short excerpt from the source document for hover preview (~250 chars). */
+  excerpt: Schema.String.pipe(Schema.withDecodingDefault(() => "")),
+});
+export type ReportCitation = typeof ReportCitation.Type;
 
 export const ReportTopicCoverageLevel = Schema.Literals(["none", "low", "medium", "high"]);
 export type ReportTopicCoverageLevel = typeof ReportTopicCoverageLevel.Type;
@@ -90,6 +101,12 @@ export const ReportSourceDocument = Schema.Struct({
   textContent: TrimmedString,
 });
 export type ReportSourceDocument = typeof ReportSourceDocument.Type;
+
+export const ReportChatInput = Schema.Struct({
+  reportId: ReportId,
+  message: TrimmedNonEmptyString,
+});
+export type ReportChatInput = typeof ReportChatInput.Type;
 
 export const ReportUserDocumentsSourceConfig = Schema.Struct({
   enabled: Schema.Boolean,
@@ -190,10 +207,23 @@ export const ReportPlanningMessage = Schema.Struct({
 });
 export type ReportPlanningMessage = typeof ReportPlanningMessage.Type;
 
+export const ReportPlanningOutlineSectionWordTarget = Schema.Struct({
+  min: Schema.Number,
+  max: Schema.Number,
+});
+export type ReportPlanningOutlineSectionWordTarget =
+  typeof ReportPlanningOutlineSectionWordTarget.Type;
+
 export const ReportPlanningOutlineSection = Schema.Struct({
   id: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
   summary: TrimmedNonEmptyString,
+  /** Guidance bullets that will steer the section agent — shown to user before approval. */
+  keyPoints: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(() => [])),
+  /** Estimated word-count range for this section. Null when unknown. */
+  wordTarget: Schema.NullOr(ReportPlanningOutlineSectionWordTarget).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
 });
 export type ReportPlanningOutlineSection = typeof ReportPlanningOutlineSection.Type;
 
@@ -229,9 +259,66 @@ export const ReportPlanningState = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(buildDefaultReportPlanningState));
 export type ReportPlanningState = typeof ReportPlanningState.Type;
 
+// ---------------------------------------------------------------------------
+// Agent swarm config — per-report advanced settings
+// ---------------------------------------------------------------------------
+
+export const REPORT_TOOL_NAMES = [
+  "list_documents",
+  "search_documents",
+  "read_document",
+  "list_tables",
+  "read_table",
+  "web_search",
+] as const;
+export type ReportToolName = (typeof REPORT_TOOL_NAMES)[number];
+const ReportToolNameSchema = Schema.Literals(REPORT_TOOL_NAMES);
+
+function buildDefaultAgentSwarmConfig() {
+  return {
+    orchestratorModel: null as ModelSelection | null,
+    sectionAgentModel: null as ModelSelection | null,
+    enabledTools: [
+      "list_documents",
+      "search_documents",
+      "read_document",
+      "list_tables",
+      "read_table",
+    ] as ReportToolName[],
+    maxToolCallsPerSection: 15 as number,
+    maxSectionRetries: 3 as number,
+  };
+}
+
+export const ReportAgentSwarmConfig = Schema.Struct({
+  /** Model used by the main orchestrator (planning + coordination). Null = use plan.orchestration.modelSelection. */
+  orchestratorModel: Schema.NullOr(ModelSelection).pipe(Schema.withDecodingDefault(() => null)),
+  /** Model used by each section sub-agent. Null = inherit from orchestratorModel. */
+  sectionAgentModel: Schema.NullOr(ModelSelection).pipe(Schema.withDecodingDefault(() => null)),
+  /** Which tools section sub-agents are allowed to call. */
+  enabledTools: Schema.Array(ReportToolNameSchema).pipe(
+    Schema.withDecodingDefault(
+      () =>
+        [
+          "list_documents",
+          "search_documents",
+          "read_document",
+          "list_tables",
+          "read_table",
+        ] as ReportToolName[],
+    ),
+  ),
+  /** Hard cap on tool calls per section agent turn (1–20). */
+  maxToolCallsPerSection: PositiveInt.pipe(Schema.withDecodingDefault(() => 15)),
+  /** Max revision attempts per section before accepting best-effort draft (0 = no retries). */
+  maxSectionRetries: NonNegativeInt.pipe(Schema.withDecodingDefault(() => 3)),
+}).pipe(Schema.withDecodingDefault(buildDefaultAgentSwarmConfig));
+export type ReportAgentSwarmConfig = typeof ReportAgentSwarmConfig.Type;
+
 function buildDefaultReportOrchestrationConfig() {
   return {
-    modelSelection: null,
+    modelSelection: null as ModelSelection | null,
+    agentSwarm: buildDefaultAgentSwarmConfig(),
   };
 }
 
@@ -241,6 +328,7 @@ export const ReportOrchestrationConfig = Schema.Struct({
   modelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(() => DEFAULT_REPORT_ORCHESTRATION_CONFIG.modelSelection),
   ),
+  agentSwarm: ReportAgentSwarmConfig,
 }).pipe(Schema.withDecodingDefault(buildDefaultReportOrchestrationConfig));
 export type ReportOrchestrationConfig = typeof ReportOrchestrationConfig.Type;
 
@@ -280,6 +368,10 @@ export type ReportExecutionLogEntry = typeof ReportExecutionLogEntry.Type;
 export const ReportArtifact = Schema.Struct({
   format: ReportOutputFormat,
   content: Schema.String,
+  /** Citation map produced at generation time — index → source document name.
+   *  Preserved through manual edits so badges can be rendered for any [N] that
+   *  remains in the user-edited content. */
+  citations: Schema.Array(ReportCitation).pipe(Schema.withDecodingDefault(() => [])),
 });
 export type ReportArtifact = typeof ReportArtifact.Type;
 
@@ -344,6 +436,7 @@ export const ReportUpdateMetaInput = Schema.Struct({
   title: Schema.optionalKey(TrimmedNonEmptyString),
   folder: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   modelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  agentSwarm: Schema.optionalKey(ReportAgentSwarmConfig),
 });
 export type ReportUpdateMetaInput = typeof ReportUpdateMetaInput.Type;
 
@@ -367,6 +460,35 @@ export const ReportMutationResult = Schema.Struct({
   report: ReportRecord,
 });
 export type ReportMutationResult = typeof ReportMutationResult.Type;
+
+// ---------------------------------------------------------------------------
+// Report run progress streaming types
+// ---------------------------------------------------------------------------
+
+/** A single progress step emitted during report execution. */
+export const ReportRunProgressStep = Schema.Struct({
+  at: IsoDateTime,
+  kind: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+  payload: Schema.Unknown,
+});
+export type ReportRunProgressStep = typeof ReportRunProgressStep.Type;
+
+/** Discriminated union streamed to clients during a startRun call. */
+export const ReportRunProgressEvent = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("run.progress"),
+    at: IsoDateTime,
+    eventKind: TrimmedNonEmptyString,
+    message: TrimmedNonEmptyString,
+    payload: Schema.Unknown,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("run.finished"),
+    result: ReportMutationResult,
+  }),
+]);
+export type ReportRunProgressEvent = typeof ReportRunProgressEvent.Type;
 
 export const ReportDeleteInput = Schema.Struct({
   reportId: ReportId,

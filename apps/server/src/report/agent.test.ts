@@ -75,6 +75,13 @@ function makePlan(overrides?: Partial<ReportPlan>): ReportPlan {
     },
     orchestration: {
       modelSelection: null,
+      agentSwarm: {
+        orchestratorModel: null,
+        sectionAgentModel: null,
+        enabledTools: ["search_documents"],
+        maxToolCallsPerSection: 8,
+        maxSectionRetries: 3,
+      },
     },
     planning: {
       status: "idle",
@@ -142,5 +149,55 @@ describe("report agent helpers", () => {
     expect(
       result.latestRun.sectionRuns.every((sectionRun) => sectionRun.status === "completed"),
     ).toBe(true);
+  });
+
+  it("assembles the final artifact in approved section order instead of dependency order", async () => {
+    const apiKeys: ProviderApiKeys = {
+      openai: "",
+      claude: "",
+      gemini: "",
+    };
+    const plan = makePlan({
+      sectionTree: [
+        {
+          id: "summary",
+          title: "Executive Summary",
+          depth: 0,
+          purpose: "Summarize the main takeaways.",
+          contentGuidance: ["Synthesize the findings."],
+          mustNotDo: [],
+          lengthTarget: { minWords: 200, maxWords: 300 },
+          sourceOverride: null,
+          dependsOn: ["background"],
+          generationOrder: "last",
+          children: [],
+        },
+        {
+          id: "background",
+          title: "Background",
+          depth: 0,
+          purpose: "Explain the source context.",
+          contentGuidance: ["Summarize the relevant context."],
+          mustNotDo: [],
+          lengthTarget: { minWords: 300, maxWords: 450 },
+          sourceOverride: null,
+          dependsOn: [],
+          generationOrder: 1,
+          children: [],
+        },
+      ],
+    });
+
+    const result = await generateReportExecution({
+      apiKeys,
+      plan,
+      runId: "report-run:presentation-order" as never,
+      startedAt: "2026-04-20T10:00:00.000Z",
+    });
+
+    const content = result.latestRun.finalArtifact?.content ?? "";
+    expect(content.indexOf("## Executive Summary")).toBeGreaterThan(-1);
+    expect(content.indexOf("## Background")).toBeGreaterThan(-1);
+    expect(content.indexOf("## Executive Summary")).toBeLessThan(content.indexOf("## Background"));
   });
 });

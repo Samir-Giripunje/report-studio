@@ -48,6 +48,13 @@ function makePlan(overrides?: Partial<ReportPlan>): ReportPlan {
     },
     orchestration: {
       modelSelection: null,
+      agentSwarm: {
+        orchestratorModel: null,
+        sectionAgentModel: null,
+        enabledTools: ["search_documents"],
+        maxToolCallsPerSection: 8,
+        maxSectionRetries: 3,
+      },
     },
     planning: {
       status: "idle",

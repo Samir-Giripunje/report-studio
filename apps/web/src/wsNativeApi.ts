@@ -3,7 +3,6 @@ import { type ContextMenuItem, type NativeApi } from "@t3tools/contracts";
 import { resetGitStatusStateForTests } from "./lib/gitStatusState";
 import { showContextMenuFallback } from "./contextMenuFallback";
 import { __resetWsRpcAtomClientForTests } from "./rpc/client";
-import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 import { resetServerStateForTests } from "./rpc/serverState";
 import { resetWsConnectionStateForTests } from "./rpc/wsConnectionState";
 import { __resetWsRpcClientForTests, getWsRpcClient } from "./wsRpcClient";
@@ -15,7 +14,6 @@ export async function __resetWsNativeApiForTests() {
   await __resetWsRpcAtomClientForTests();
   await __resetWsRpcClientForTests();
   resetGitStatusStateForTests();
-  resetRequestLatencyStateForTests();
   resetServerStateForTests();
   resetWsConnectionStateForTests();
 }
@@ -121,6 +119,7 @@ export function createWsNativeApi(): NativeApi {
       startRun: rpcClient.reports.startRun,
       updateArtifact: rpcClient.reports.updateArtifact,
       delete: (reportId) => rpcClient.reports.delete({ reportId }),
+      chatWithReport: rpcClient.reports.chatWithReport,
     },
   };
 

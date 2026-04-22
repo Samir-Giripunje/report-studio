@@ -29,12 +29,6 @@ export const REPORT_MODEL_OPTIONS: readonly ReportModelOption[] = [
     apiKeyRequired: "gemini",
   },
   {
-    label: "Gemini 3.1 Pro",
-    model: "gemini-3.1-pro",
-    provider: "codex",
-    apiKeyRequired: "gemini",
-  },
-  {
     label: "Claude Sonnet 4.6",
     model: "claude-sonnet-4-6",
     provider: "claudeAgent",
@@ -124,9 +118,7 @@ export function ReportModelControl(props: {
           return (
             <SelectItem key={option.model} value={option.model} disabled={!hasKey}>
               {option.label}
-              {!hasKey && (
-                <span className="ml-1 text-xs text-muted-foreground">(no API key)</span>
-              )}
+              {!hasKey && <span className="ml-1 text-xs text-muted-foreground">(no API key)</span>}
             </SelectItem>
           );
         })}

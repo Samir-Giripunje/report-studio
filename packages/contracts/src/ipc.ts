@@ -52,10 +52,12 @@ import type {
 import type {
   ReportApproveInput,
   ReportBeginPlanningInput,
+  ReportChatInput,
   ReportCreateDraftInput,
   ReportDeleteResult,
   ReportMutationResult,
   ReportRespondToPlanningInput,
+  ReportRunProgressStep,
   ReportSnapshot,
   ReportStartRunInput,
   ReportUpdateArtifactInput,
@@ -217,8 +219,12 @@ export interface NativeApi {
     beginPlanning: (input: ReportBeginPlanningInput) => Promise<ReportMutationResult>;
     respondToPlanning: (input: ReportRespondToPlanningInput) => Promise<ReportMutationResult>;
     approve: (reportId: ReportApproveInput["reportId"]) => Promise<ReportMutationResult>;
-    startRun: (input: ReportStartRunInput) => Promise<ReportMutationResult>;
+    startRun: (
+      input: ReportStartRunInput,
+      onProgress?: (event: ReportRunProgressStep) => void,
+    ) => Promise<ReportMutationResult>;
     updateArtifact: (input: ReportUpdateArtifactInput) => Promise<ReportMutationResult>;
     delete: (reportId: ReportApproveInput["reportId"]) => Promise<ReportDeleteResult>;
+    chatWithReport: (input: ReportChatInput) => Promise<ReportMutationResult>;
   };
 }

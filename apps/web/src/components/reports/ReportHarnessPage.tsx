@@ -1,7 +1,9 @@
 import {
   type ProviderKind,
+  type ReportAgentSwarmConfig,
   type ReportPlan,
   type ReportRecord,
+  type ReportRunProgressStep,
   type ReportSectionNode,
   type ReportSectionRun,
   type ReportSourceDocument,
@@ -22,8 +24,15 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Textarea } from "../ui/textarea";
 import { NewReportDialog } from "./NewReportDialog";
+import { ReportAdvancedSettings } from "./ReportAdvancedSettings";
 import { ReportGuidedComposer } from "./ReportGuidedComposer";
-import { getDefaultReportModelSelection, ReportModelControl, resolveReportModelSelection } from "./ReportModelControl";
+import { ReportMdViewer } from "./ReportMdViewer";
+import {
+  getDefaultReportModelSelection,
+  ReportModelControl,
+  resolveReportModelSelection,
+} from "./ReportModelControl";
+import { ReportRunActivityFeed } from "./ReportRunActivityFeed";
 
 type ReportSectionLike = ReportSectionNode | ReportSectionRun;
 
@@ -103,6 +112,7 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
   const [creatingReportMode, setCreatingReportMode] = useState<ReportCreationMode | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [runProgressEvents, setRunProgressEvents] = useState<ReportRunProgressStep[]>([]);
   const snapshot = snapshotQuery.data;
   const selectedReportId = props.selectedReportId ?? null;
   const createReportDraft = useCreateReportDraft(snapshot?.reports.length ?? 0);
@@ -124,15 +134,17 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
     setError(null);
   }, [snapshotQuery.error]);
 
-  const selectedReport = useMemo(
-    () =>
-      (selectedReportId
-        ? snapshot?.reports.find((report) => report.id === selectedReportId)
-        : null) ??
-      snapshot?.reports[0] ??
-      null,
-    [selectedReportId, snapshot?.reports],
-  );
+  const selectedReport = useMemo(() => {
+    if (!snapshot) {
+      return null;
+    }
+
+    if (selectedReportId) {
+      return snapshot.reports.find((report) => report.id === selectedReportId) ?? null;
+    }
+
+    return snapshot.reports[0] ?? null;
+  }, [selectedReportId, snapshot]);
 
   useEffect(() => {
     if (!selectedReportId) {
@@ -199,7 +211,8 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
         const message =
           cause instanceof Error && cause.message.trim().length > 0
             ? cause.message
-            : typeof (cause as any)?.message === "string" && (cause as any).message.trim().length > 0
+            : typeof (cause as any)?.message === "string" &&
+                (cause as any).message.trim().length > 0
               ? (cause as any).message
               : "The report action failed.";
         setError(message);
@@ -270,12 +283,16 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
     });
   };
 
-  const handleStartRun = async () => {
+  const handleStartRun = async (onProgress?: (event: ReportRunProgressStep) => void) => {
     if (!api || !selectedReport) {
       return;
     }
+    setRunProgressEvents([]);
     await runAction("start-run", async () => {
-      await api.reports.startRun({ reportId: selectedReport.id });
+      await api.reports.startRun({ reportId: selectedReport.id }, (event) => {
+        setRunProgressEvents((prev) => [...prev, event]);
+        onProgress?.(event);
+      });
     });
   };
 
@@ -309,6 +326,22 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
     [api, runAction, selectedReport],
   );
 
+  const handleSaveAgentSwarm = useCallback(
+    async (agentSwarm: ReportAgentSwarmConfig) => {
+      if (!api || !selectedReport) {
+        return;
+      }
+      await runAction("save-agent-swarm", async () => {
+        const result = await api.reports.updateMeta({
+          reportId: selectedReport.id,
+          agentSwarm,
+        });
+        upsertReportSnapshotRecord(queryClient, result.report);
+      });
+    },
+    [api, queryClient, runAction, selectedReport],
+  );
+
   const handleRespondToGuidedPlanning = useCallback(
     async (response: string) => {
       if (!api || !selectedReport) {
@@ -325,6 +358,25 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
     [api, runAction, selectedReport],
   );
 
+  const handleChatWithReport = useCallback(
+    async (message: string) => {
+      if (!api || !selectedReport) {
+        return;
+      }
+
+      await runAction("chat-with-report", async () => {
+        await api.reports.chatWithReport({
+          reportId: selectedReport.id,
+          message,
+        });
+      });
+    },
+    [api, runAction, selectedReport],
+  );
+
+  // Show the 3-panel MD viewer once a final artifact exists for the report.
+  const hasFinalArtifact = selectedReport?.latestRun?.finalArtifact != null;
+
   return (
     <>
       <NewReportDialog
@@ -339,207 +391,220 @@ export function ReportHarnessPage(props: { selectedReportId?: string | null }) {
         onSelect={handleCreateReportSelection}
       />
 
-      <div className="min-h-0 flex-1 overflow-auto p-4">
-        <div className="mx-auto min-h-full max-w-6xl">
-          {selectedReport ? (
-            <div className="space-y-4">
-              {isUserGuidedReport(selectedReport) ? (
-                <ReportGuidedComposer
-                  busy={busyAction !== null}
-                  modelSelection={reportModelSelection}
-                  providerApiKeys={providerApiKeys}
-                  report={selectedReport}
-                  onApprove={handleApprove}
-                  onModelSelectionChange={handleReportModelSelectionChange}
-                  onRespond={handleRespondToGuidedPlanning}
-                  onStartRun={handleStartRun}
-                  onStartPlanning={handleBeginGuidedPlanning}
-                  onUpdateArtifact={handleUpdateArtifact}
-                />
-              ) : (
-                <Card>
-                  <CardHeader>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <CardTitle>{selectedReport.title}</CardTitle>
-                        <CardDescription>{selectedReport.plan.metadata.brief}</CardDescription>
-                      </div>
-                      <div className="flex flex-wrap items-start justify-end gap-3">
-                        <ReportModelControl
-                          disabled={busyAction !== null}
-                          modelSelection={reportModelSelection}
-                          providerApiKeys={providerApiKeys}
-                          onModelSelectionChange={handleReportModelSelectionChange}
-                        />
-                        <Badge variant={statusBadgeVariant(selectedReport.status)}>
-                          {selectedReport.status}
-                        </Badge>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="flex flex-wrap gap-2">
-                    <Button
-                      disabled={busyAction !== null}
-                      variant="outline"
-                      onClick={() => void refreshSnapshot()}
-                    >
-                      <RefreshCcwIcon className="size-3.5" />
-                      Refresh
-                    </Button>
-                    <Button
-                      disabled={busyAction !== null}
-                      variant="outline"
-                      onClick={() => void handleSavePlan()}
-                    >
-                      <SaveIcon className="size-3.5" />
-                      Save plan JSON
-                    </Button>
-                    <Button
-                      disabled={busyAction !== null || selectedReport.status === "running"}
-                      variant="outline"
-                      onClick={() => void handleApprove()}
-                    >
-                      <ShieldCheckIcon className="size-3.5" />
-                      Approve plan
-                    </Button>
-                    <Button
-                      disabled={busyAction !== null || selectedReport.plan.status !== "finalized"}
-                      onClick={() => void handleStartRun()}
-                    >
-                      <PlayIcon className="size-3.5" />
-                      Start orchestration
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              {error ? (
-                <Card className="border-destructive/40">
-                  <CardContent className="pt-6 text-sm text-destructive">{error}</CardContent>
-                </Card>
-              ) : null}
-
-              {!isUserGuidedReport(selectedReport) ? (
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
-                  <Card className="min-h-[28rem]">
+      {/* ── 3-panel MD viewer — fills the remaining viewport height ── */}
+      {hasFinalArtifact && selectedReport ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <ReportMdViewer
+            busy={busyAction !== null}
+            report={selectedReport}
+            onRespond={handleChatWithReport}
+            onUpdateArtifact={handleUpdateArtifact}
+          />
+        </div>
+      ) : (
+        /* ── Planning / wizard UI ── */
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          <div className="mx-auto min-h-full max-w-6xl">
+            {selectedReport ? (
+              <div className="space-y-4">
+                {isUserGuidedReport(selectedReport) ? (
+                  <ReportGuidedComposer
+                    busy={busyAction !== null}
+                    modelSelection={reportModelSelection}
+                    providerApiKeys={providerApiKeys}
+                    report={selectedReport}
+                    onApprove={handleApprove}
+                    onModelSelectionChange={handleReportModelSelectionChange}
+                    onRespond={handleRespondToGuidedPlanning}
+                    onSaveAgentSwarm={handleSaveAgentSwarm}
+                    onStartRun={handleStartRun}
+                    onStartPlanning={handleBeginGuidedPlanning}
+                    onUpdateArtifact={handleUpdateArtifact}
+                  />
+                ) : (
+                  <Card>
                     <CardHeader>
-                      <CardTitle>Plan JSON</CardTitle>
-                      <CardDescription>
-                        Edit the typed report plan directly for now. A richer planner UI can layer
-                        on top of the same contract.
-                      </CardDescription>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <CardTitle>{selectedReport.title}</CardTitle>
+                          <CardDescription>{selectedReport.plan.metadata.brief}</CardDescription>
+                        </div>
+                        <div className="flex flex-wrap items-start justify-end gap-3">
+                          <ReportModelControl
+                            disabled={busyAction !== null}
+                            modelSelection={reportModelSelection}
+                            providerApiKeys={providerApiKeys}
+                            onModelSelectionChange={handleReportModelSelectionChange}
+                          />
+                          <Badge variant={statusBadgeVariant(selectedReport.status)}>
+                            {selectedReport.status}
+                          </Badge>
+                        </div>
+                      </div>
                     </CardHeader>
-                    <CardContent>
-                      <Textarea
-                        className="min-h-[24rem]"
-                        value={planDraft}
-                        onChange={(event) => setPlanDraft(event.target.value)}
-                      />
+                    <CardContent className="flex flex-wrap gap-2">
+                      <Button
+                        disabled={busyAction !== null}
+                        variant="outline"
+                        onClick={() => void refreshSnapshot()}
+                      >
+                        <RefreshCcwIcon className="size-3.5" />
+                        Refresh
+                      </Button>
+                      <Button
+                        disabled={busyAction !== null}
+                        variant="outline"
+                        onClick={() => void handleSavePlan()}
+                      >
+                        <SaveIcon className="size-3.5" />
+                        Save plan JSON
+                      </Button>
+                      <Button
+                        disabled={busyAction !== null || selectedReport.status === "running"}
+                        variant="outline"
+                        onClick={() => void handleApprove()}
+                      >
+                        <ShieldCheckIcon className="size-3.5" />
+                        Approve plan
+                      </Button>
+                      <Button
+                        disabled={busyAction !== null || selectedReport.plan.status !== "finalized"}
+                        onClick={() => void handleStartRun()}
+                      >
+                        <PlayIcon className="size-3.5" />
+                        Start orchestration
+                      </Button>
                     </CardContent>
                   </Card>
+                )}
 
-                  <div className="space-y-4">
-                    <Card>
+                {error ? (
+                  <Card className="border-destructive/40">
+                    <CardContent className="pt-6 text-sm text-destructive">{error}</CardContent>
+                  </Card>
+                ) : null}
+
+                {!isUserGuidedReport(selectedReport) &&
+                (busyAction === "start-run" || runProgressEvents.length > 0) ? (
+                  <ReportRunActivityFeed
+                    events={runProgressEvents}
+                    isRunning={busyAction === "start-run"}
+                  />
+                ) : null}
+
+                {!isUserGuidedReport(selectedReport) ? (
+                  <ReportAdvancedSettings
+                    agentSwarm={selectedReport.plan.orchestration.agentSwarm}
+                    disabled={busyAction !== null}
+                    providerApiKeys={providerApiKeys}
+                    onSave={handleSaveAgentSwarm}
+                  />
+                ) : null}
+
+                {!isUserGuidedReport(selectedReport) ? (
+                  <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+                    <Card className="min-h-[28rem]">
                       <CardHeader>
-                        <CardTitle>Sections</CardTitle>
+                        <CardTitle>Plan JSON</CardTitle>
                         <CardDescription>
-                          {selectedReport.latestRun
-                            ? "Initial orchestration graph and readiness."
-                            : "Section topology from the current plan."}
+                          Edit the typed report plan directly for now. A richer planner UI can layer
+                          on top of the same contract.
                         </CardDescription>
                       </CardHeader>
-                      <CardContent className="space-y-2">
-                        {displayedSections.map((section) => (
-                          <div
-                            key={sectionKey(section)}
-                            className="rounded-xl border border-border/70 bg-background px-3 py-2"
-                          >
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="min-w-0">
-                                <div className="truncate text-sm font-medium text-foreground">
-                                  {sectionTitle(section)}
-                                </div>
-                                <div className="mt-1 text-xs text-muted-foreground">
-                                  {sectionDependsOn(section).length > 0
-                                    ? `Depends on ${sectionDependsOn(section).join(", ")}`
-                                    : "No dependencies"}
-                                </div>
-                              </div>
-                              {"status" in section ? (
-                                <Badge
-                                  size="sm"
-                                  variant={sectionStatusBadgeVariant(section.status)}
-                                >
-                                  {section.status}
-                                </Badge>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))}
+                      <CardContent>
+                        <Textarea
+                          className="min-h-[24rem]"
+                          value={planDraft}
+                          onChange={(event) => setPlanDraft(event.target.value)}
+                        />
                       </CardContent>
                     </Card>
 
-                    {selectedReport.latestRun ? (
+                    <div className="space-y-4">
                       <Card>
                         <CardHeader>
-                          <CardTitle>Execution log</CardTitle>
+                          <CardTitle>Sections</CardTitle>
                           <CardDescription>
-                            Current run state for the report harness.
+                            {selectedReport.latestRun
+                              ? "Initial orchestration graph and readiness."
+                              : "Section topology from the current plan."}
                           </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-2">
-                          {selectedReport.latestRun.executionLog.map((entry) => (
+                          {displayedSections.map((section) => (
                             <div
-                              key={`${entry.at}-${entry.kind}-${entry.message}`}
+                              key={sectionKey(section)}
                               className="rounded-xl border border-border/70 bg-background px-3 py-2"
                             >
-                              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                {entry.kind}
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="truncate text-sm font-medium text-foreground">
+                                    {sectionTitle(section)}
+                                  </div>
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {sectionDependsOn(section).length > 0
+                                      ? `Depends on ${sectionDependsOn(section).join(", ")}`
+                                      : "No dependencies"}
+                                  </div>
+                                </div>
+                                {"status" in section ? (
+                                  <Badge
+                                    size="sm"
+                                    variant={sectionStatusBadgeVariant(section.status)}
+                                  >
+                                    {section.status}
+                                  </Badge>
+                                ) : null}
                               </div>
-                              <div className="mt-1 text-sm text-foreground">{entry.message}</div>
-                              <div className="mt-1 text-xs text-muted-foreground">{entry.at}</div>
                             </div>
                           ))}
                         </CardContent>
                       </Card>
-                    ) : null}
 
-                    {selectedReport.latestRun?.finalArtifact ? (
-                      <Card>
-                        <CardHeader>
-                          <CardTitle>Generated report</CardTitle>
-                          <CardDescription>
-                            Latest artifact generated by the report orchestration flow.
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <Textarea
-                            className="min-h-[22rem] font-mono text-xs"
-                            readOnly
-                            value={selectedReport.latestRun.finalArtifact.content}
-                          />
-                        </CardContent>
-                      </Card>
-                    ) : null}
+                      {selectedReport.latestRun ? (
+                        <Card>
+                          <CardHeader>
+                            <CardTitle>Execution log</CardTitle>
+                            <CardDescription>
+                              Current run state for the report harness.
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            {selectedReport.latestRun.executionLog.map((entry) => (
+                              <div
+                                key={`${entry.at}-${entry.kind}-${entry.message}`}
+                                className="rounded-xl border border-border/70 bg-background px-3 py-2"
+                              >
+                                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  {entry.kind}
+                                </div>
+                                <div className="mt-1 text-sm text-foreground">{entry.message}</div>
+                                <div className="mt-1 text-xs text-muted-foreground">{entry.at}</div>
+                              </div>
+                            ))}
+                          </CardContent>
+                        </Card>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <Card className="mx-auto flex min-h-[60vh] max-w-3xl">
-              <CardContent className="flex h-full flex-1 flex-col items-center justify-center gap-4 text-sm text-muted-foreground">
-                <p>Create a report to get started.</p>
-                <Button
-                  disabled={creatingReportMode !== null}
-                  onClick={() => setIsNewReportDialogOpen(true)}
-                >
-                  Create report
-                </Button>
-              </CardContent>
-            </Card>
-          )}
+                ) : null}
+              </div>
+            ) : (
+              <Card className="mx-auto flex min-h-[60vh] max-w-3xl">
+                <CardContent className="flex h-full flex-1 flex-col items-center justify-center gap-4 text-sm text-muted-foreground">
+                  <p>Create a report to get started.</p>
+                  <Button
+                    disabled={creatingReportMode !== null}
+                    onClick={() => setIsNewReportDialogOpen(true)}
+                  >
+                    Create report
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }

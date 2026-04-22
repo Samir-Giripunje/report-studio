@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   clearThreadUi,
   markThreadUnread,
+  reorderReportFolders,
   reorderProjects,
   setProjectExpanded,
   syncProjects,
+  syncReportFolders,
   syncThreads,
   type UiState,
 } from "./uiStateStore";
@@ -15,6 +17,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    reportFolderLatestUpdatedAtByLabel: {},
+    reportFolderOrder: [],
     threadLastVisitedAtById: {},
     ...overrides,
   };
@@ -59,6 +63,46 @@ describe("uiStateStore pure functions", () => {
     const next = reorderProjects(initialState, project1, project3);
 
     expect(next.projectOrder).toEqual([project2, project3, project1]);
+  });
+
+  it("syncReportFolders initializes folders by latest update time", () => {
+    const next = syncReportFolders(makeUiState(), [
+      { label: "Alpha", latestUpdatedAt: "2026-02-25T12:30:00.000Z" },
+      { label: "Beta", latestUpdatedAt: "2026-02-25T12:40:00.000Z" },
+      { label: "Gamma", latestUpdatedAt: "2026-02-25T12:35:00.000Z" },
+    ]);
+
+    expect(next.reportFolderOrder).toEqual(["Beta", "Gamma", "Alpha"]);
+  });
+
+  it("reorderReportFolders preserves a manual folder order", () => {
+    const initialState = makeUiState({
+      reportFolderOrder: ["Alpha", "Beta", "Gamma"],
+    });
+
+    const next = reorderReportFolders(initialState, "Alpha", "Gamma");
+
+    expect(next.reportFolderOrder).toEqual(["Beta", "Gamma", "Alpha"]);
+  });
+
+  it("syncReportFolders promotes updated and new folders above manual order", () => {
+    const initialState = makeUiState({
+      reportFolderLatestUpdatedAtByLabel: {
+        Alpha: "2026-02-25T12:30:00.000Z",
+        Beta: "2026-02-25T12:40:00.000Z",
+        Gamma: "2026-02-25T12:35:00.000Z",
+      },
+      reportFolderOrder: ["Gamma", "Alpha", "Beta"],
+    });
+
+    const next = syncReportFolders(initialState, [
+      { label: "Alpha", latestUpdatedAt: "2026-02-25T12:30:00.000Z" },
+      { label: "Beta", latestUpdatedAt: "2026-02-25T12:50:00.000Z" },
+      { label: "Delta", latestUpdatedAt: "2026-02-25T12:45:00.000Z" },
+      { label: "Gamma", latestUpdatedAt: "2026-02-25T12:35:00.000Z" },
+    ]);
+
+    expect(next.reportFolderOrder).toEqual(["Beta", "Delta", "Gamma", "Alpha"]);
   });
 
   it("syncProjects preserves current project order during snapshot recovery", () => {

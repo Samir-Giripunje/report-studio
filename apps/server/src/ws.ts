@@ -15,6 +15,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   REPORT_WS_METHODS,
+  ReportRunProgressEvent,
   ReportServiceError,
   ThreadId,
   type TerminalEvent,
@@ -454,17 +455,30 @@ const WsRpcLayer = WsRpcGroup.toLayer(
           { "rpc.aggregate": "reports" },
         ),
       [REPORT_WS_METHODS.startRun]: (input) =>
-        observeRpcEffect(
+        observeRpcStream(
           REPORT_WS_METHODS.startRun,
-          reportService.startRun(input).pipe(
-            Effect.mapError((cause) =>
-              Schema.is(ReportServiceError)(cause)
-                ? cause
-                : new ReportServiceError({
-                    message: "Failed to start report orchestration.",
-                    cause,
-                  }),
-            ),
+          Stream.callback<ReportRunProgressEvent, ReportServiceError>((queue) =>
+            reportService
+              .startRun(input, (step) =>
+                Effect.runPromise(
+                  Queue.offer(queue, {
+                    kind: "run.progress" as const,
+                    at: step.at,
+                    eventKind: step.kind,
+                    message: step.message,
+                    payload: step.payload,
+                  }).pipe(Effect.asVoid),
+                ),
+              )
+              .pipe(
+                Effect.matchCauseEffect({
+                  onFailure: (cause) => Queue.failCause(queue, cause),
+                  onSuccess: (result) =>
+                    Queue.offer(queue, { kind: "run.finished" as const, result }).pipe(
+                      Effect.andThen(Queue.end(queue)),
+                    ),
+                }),
+              ),
           ),
           { "rpc.aggregate": "reports" },
         ),
@@ -492,6 +506,21 @@ const WsRpcLayer = WsRpcGroup.toLayer(
                 ? cause
                 : new ReportServiceError({
                     message: "Failed to delete report.",
+                    cause,
+                  }),
+            ),
+          ),
+          { "rpc.aggregate": "reports" },
+        ),
+      [REPORT_WS_METHODS.chatWithReport]: (input) =>
+        observeRpcEffect(
+          REPORT_WS_METHODS.chatWithReport,
+          reportService.chatWithReport(input).pipe(
+            Effect.mapError((cause) =>
+              Schema.is(ReportServiceError)(cause)
+                ? cause
+                : new ReportServiceError({
+                    message: "Failed to process report chat message.",
                     cause,
                   }),
             ),

@@ -56,6 +56,19 @@ function createReport(
     },
     orchestration: {
       modelSelection: null,
+      agentSwarm: {
+        orchestratorModel: null,
+        sectionAgentModel: null,
+        enabledTools: [
+          "list_documents",
+          "search_documents",
+          "read_document",
+          "list_tables",
+          "read_table",
+        ],
+        maxToolCallsPerSection: 15,
+        maxSectionRetries: 3,
+      },
     },
     planning: {
       status: "idle",
